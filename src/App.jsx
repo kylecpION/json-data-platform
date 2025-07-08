@@ -1,684 +1,588 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import { Plus, Trash2, Edit2, Copy, Check, X, Users, Building2 } from 'lucide-react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
+import { Plus, Trash2, Download, Copy, Check, FileDown, Users, Briefcase, Building2 } from 'lucide-react';
 
 const BulkDataEntryPlatform = () => {
-    const [entityType, setEntityType] = useState('individuals');
     const [data, setData] = useState([]);
-    const [editingCell, setEditingCell] = useState(null);
-    const [editingValue, setEditingValue] = useState('');
-    const [modalState, setModalState] = useState(null);
+    const [selectedCells, setSelectedCells] = useState(new Set());
+    const [selectionStart, setSelectionStart] = useState(null);
     const [generatedJson, setGeneratedJson] = useState('');
     const [copySuccess, setCopySuccess] = useState(false);
+    const [mode, setMode] = useState('create'); // 'create' or 'update'
+    const [profileType, setProfileType] = useState('rel'); // 'rel' or 'pep'
+    const tableRef = useRef(null);
 
-    // Field definitions based on ARI Bulk Tool JSON breakdown
-    const individualFields = {
-        simple: ['fullName', 'gender', 'isDead', 'pepTier'],
-        arrays: ['nationalities', 'datesOfBirth', 'datesOfDeath', 'profileImages'],
-        complex: ['aliases', 'addresses', 'evidences', 'currentPepEntries', 'relEntries']
-    };
-
-    const businessFields = {
-        simple: ['name', 'description'],
-        arrays: ['activities', 'businessTypes', 'profileImages'],
-        complex: ['addresses', 'evidences', 'relEntries']
-    };
-
-    // Allowed values from the document
-    const genderOptions = ['Male', 'Female'];
-    const pepTierOptions = ['PEP Tier 1', 'PEP Tier 2', 'PEP Tier 3'];
-    const addressTypesIndividual = ['Registered', 'Operating', 'Previous', 'Branch Office', 'Representative Office', 'Headquarters'];
-    const businessTypeOptions = [
-        'Vessel', 'Aircraft', 'Terrorist Organisation', 'Organised Crime Group', 'Militant Group',
-        'Shell Corporation', 'Sovereign Wealth Fund', 'Government Body', 'Political Party',
-        'Civic Movement', 'International Organisation', 'Other International Organisations',
-        'Non-Government Organisation', 'Charitable Organisation', 'Professional Organisation',
-        'Privately-Held Company', 'Publicly-Traded Company', 'Trust Fund', 'Bank',
-        'Cryptocurrency Business', 'Gaming Business', 'Non-Bank Financial Institution',
-        'Designated Professional (Gatekeeper) Organisation', 'Website', 'Fake Entity/Clone Company',
-        'Apps/Applications'
+    // Excel columns - flexible structure that can handle various data types
+    const excelColumns = [
+        'no', 'name', 'alias', 'alias2', 'osn', 'gender', 'type',
+        'event_type', 'rel_category', 'rel_subcategory', 'list_name',
+        'pep_tier', 'pep_segment', 'pep_position', 'pep_category',
+        'line1', 'line2', 'city', 'county', 'state', 'country', 'country_id',
+        'summary', 'snippet', 'pdf_names', 'url', 'article_id',
+        'publication_date', 'event_date', 'day', 'month', 'year',
+        'datefrom', 'dateto', 'day_from', 'month_from', 'year_from',
+        'day_to', 'month_to', 'year_to',
+        'qr', 'rel_id', 'qr2', 'bridge'
     ];
 
-    // Country codes list (partial - in real app would include all from the document)
-    const countryCodes = ['AF', 'AL', 'DZ', 'AS', 'AD', 'AO', 'AI', 'AG', 'AR', 'AM', 'AW', 'AU', 'AT', 'AZ',
-        'BS', 'BH', 'BD', 'BB', 'BY', 'BE', 'BZ', 'BJ', 'BM', 'BT', 'BO', 'BA', 'BW', 'BR', 'VG', 'BN',
-        'BG', 'BF', 'MM', 'BI', 'KH', 'CM', 'CA', 'CV', 'KY', 'CF', 'TD', 'CL', 'CN', 'CO', 'KM', 'CD',
-        'CG', 'CK', 'CR', 'HR', 'CU', 'CY', 'CW', 'CZ', 'CI', 'DK', 'DJ', 'DM', 'DO', 'TL', 'EC', 'EG',
-        'SV', 'GQ', 'ER', 'EE', 'ET', 'FO', 'FJ', 'FI', 'FR', 'GF', 'PF', 'GA', 'GM', 'GE', 'DE', 'GH',
-        'GI', 'GR', 'GL', 'GD', 'GP', 'GU', 'GT', 'GG', 'GN', 'GW', 'GY', 'HT', 'VA', 'HN', 'HK', 'HU',
-        'IS', 'IN', 'ID', 'IR', 'IQ', 'IE', 'IM', 'IL', 'IT', 'JM', 'JP', 'JE', 'JO', 'KZ', 'KE', 'KI',
-        'KP', 'KR', 'XK', 'KW', 'KG', 'LA', 'LV', 'LB', 'LS', 'LR', 'LY', 'LI', 'LT', 'LU', 'MO', 'MK',
-        'MG', 'MW', 'MY', 'MV', 'ML', 'MT', 'MH', 'MQ', 'MR', 'MU', 'YT', 'MX', 'FM', 'MD', 'MC', 'MN',
-        'ME', 'MS', 'MA', 'MZ', 'NA', 'NR', 'NP', 'NL', 'NC', 'NZ', 'NI', 'NE', 'NG', 'NU', 'NF', 'MP',
-        'NO', 'OM', 'PK', 'PW', 'PS', 'PA', 'PG', 'PY', 'PE', 'PH', 'PL', 'PT', 'PR', 'QA', 'RE', 'RO',
-        'RU', 'RW', 'KN', 'LC', 'PM', 'VC', 'WS', 'SM', 'ST', 'SX', 'SA', 'SN', 'RS', 'SC', 'SL', 'SG',
-        'SK', 'SI', 'SB', 'SO', 'ZA', 'SS', 'ES', 'LK', 'SD', 'SR', 'SZ', 'SE', 'CH', 'SY', 'TW', 'TJ',
-        'TZ', 'TH', 'TG', 'TO', 'TT', 'TN', 'TR', 'TM', 'TC', 'TV', 'UG', 'UA', 'AE', 'GB', 'VI', 'US',
-        'UY', 'UZ', 'VU', 'VE', 'VN', 'WF', 'EH', 'YE', 'ZM', 'ZW'];
-
-    const currentFields = entityType === 'individuals' ? individualFields : businessFields;
-    const allFields = [...currentFields.simple, ...currentFields.arrays, ...currentFields.complex];
-
-    // Parse full name into components
-    const parseFullName = (fullName) => {
-        if (!fullName || typeof fullName !== 'string') return { firstName: '', middleName: '', lastName: '' };
-
-        const parts = fullName.trim().split(/\s+/);
-
-        if (parts.length === 1) {
-            return { firstName: parts[0], middleName: '', lastName: '' };
-        } else if (parts.length === 2) {
-            return { firstName: parts[0], middleName: '', lastName: parts[1] };
-        } else {
-            return {
-                firstName: parts[0],
-                middleName: parts.slice(1, -1).join(' '),
-                lastName: parts[parts.length - 1]
-            };
+    // Initialize empty rows
+    const initializeRows = (count = 20) => {
+        const newRows = [];
+        for (let i = 0; i < count; i++) {
+            const row = { id: Date.now() + i };
+            excelColumns.forEach(col => {
+                row[col] = '';
+            });
+            row['qr'] = mode;
+            newRows.push(row);
         }
+        return newRows;
     };
 
-    // Parse date fields
-    const parseDates = (dateString) => {
-        if (!dateString) return [];
+    useEffect(() => {
+        setData(initializeRows());
+        setSelectedCells(new Set());
+    }, [mode, profileType]);
 
-        const dates = dateString.split(/[;|]/).map(d => d.trim()).filter(d => d);
-        return dates.map(date => {
-            const parts = date.split(/[-\/,]/).map(p => p.trim());
-            if (parts.length === 3) {
-                return {
-                    day: parseInt(parts[0]) || null,
-                    month: parseInt(parts[1]) || null,
-                    year: parseInt(parts[2]) || null
-                };
+    // Handle cell click and selection
+    const handleCellClick = (rowIndex, colIndex, e) => {
+        const cellKey = `${rowIndex}-${colIndex}`;
+
+        if (e.shiftKey && selectionStart) {
+            const [startRow, startCol] = selectionStart.split('-').map(Number);
+            const minRow = Math.min(startRow, rowIndex);
+            const maxRow = Math.max(startRow, rowIndex);
+            const minCol = Math.min(startCol, colIndex);
+            const maxCol = Math.max(startCol, colIndex);
+
+            const newSelection = new Set();
+            for (let r = minRow; r <= maxRow; r++) {
+                for (let c = minCol; c <= maxCol; c++) {
+                    newSelection.add(`${r}-${c}`);
+                }
             }
-            return null;
-        }).filter(d => d && d.year >= 1900);
-    };
-
-    // Parse complex field data from paste
-    const parseComplexFieldData = (field, data) => {
-        if (!data || typeof data !== 'string') return [];
-
-        // Split by common delimiters (newline, semicolon, or pipe)
-        const items = data.split(/[\n;|]/).map(item => item.trim()).filter(item => item);
-
-        if (field === 'addresses') {
-            return items.map(item => {
-                // Try to parse structured address (e.g., "Operating,52,Main St,,Sofia,Sofia,SF,1111")
-                const parts = item.split(/[,\t]/).map(p => p.trim());
-                if (parts.length >= 2) {
-                    return {
-                        addressType: parts[0] || 'Operating',
-                        countryId: parseInt(parts[1]) || '',
-                        line1: parts[2] || '',
-                        line2: parts[3] || '',
-                        city: parts[4] || '',
-                        county: parts[5] || '',
-                        countyAbbrev: parts[6] || '',
-                        postcode: parts[7] || '',
-                        deleted: parts[8] === 'true' || parts[8] === 'True'
-                    };
-                }
-                // Otherwise treat as line1
-                return {
-                    addressType: 'Operating',
-                    countryId: '',
-                    line1: item,
-                    line2: '',
-                    city: '',
-                    county: '',
-                    countyAbbrev: '',
-                    postcode: '',
-                    deleted: false
-                };
-            });
-        } else if (field === 'aliases') {
-            // For aliases, each line is a different alias
-            return items;
-        } else if (field === 'evidences' || field === 'currentPepEntries' || field === 'relEntries') {
-            // For other complex fields, try to parse as JSON or treat as simple strings
-            return items.map(item => {
-                try {
-                    return JSON.parse(item);
-                } catch {
-                    return item;
-                }
-            });
-        }
-
-        return items;
-    };
-
-    // Initialize data with empty row
-    const addNewRow = useCallback(() => {
-        const newRow = { id: Date.now() };
-        allFields.forEach(field => {
-            if (currentFields.complex.includes(field) || currentFields.arrays.includes(field)) {
-                newRow[field] = [];
-            } else if (field === 'isDead') {
-                newRow[field] = false;
+            setSelectedCells(newSelection);
+        } else if (e.ctrlKey || e.metaKey) {
+            const newSelection = new Set(selectedCells);
+            if (newSelection.has(cellKey)) {
+                newSelection.delete(cellKey);
             } else {
-                newRow[field] = '';
+                newSelection.add(cellKey);
             }
-        });
-        // Add individual name fields for individuals
-        if (entityType === 'individuals') {
-            newRow.firstName = '';
-            newRow.middleName = '';
-            newRow.lastName = '';
+            setSelectedCells(newSelection);
+            setSelectionStart(cellKey);
+        } else {
+            setSelectedCells(new Set([cellKey]));
+            setSelectionStart(cellKey);
         }
-        setData(prev => [...prev, newRow]);
-    }, [allFields, currentFields, entityType]);
+    };
 
     // Handle cell editing
-    const handleCellClick = (rowId, field) => {
-        if (!currentFields.complex.includes(field)) {
-            const row = data.find(r => r.id === rowId);
-            setEditingCell({ rowId, field });
-            setEditingValue(row[field] || '');
-        }
-    };
-
-    const handleCellChange = (value) => {
-        setEditingValue(value);
-    };
-
-    const saveCellValue = () => {
-        if (editingCell) {
-            setData(prev => prev.map(row => {
-                if (row.id === editingCell.rowId) {
-                    if (editingCell.field === 'fullName' && entityType === 'individuals') {
-                        // Parse full name and update individual name fields
-                        const nameParts = parseFullName(editingValue);
-                        return { ...row, ...nameParts, fullName: editingValue };
-                    } else {
-                        return { ...row, [editingCell.field]: editingValue };
-                    }
-                }
-                return row;
-            }));
-            setEditingCell(null);
-            setEditingValue('');
-        }
-    };
-
-    const cancelEdit = () => {
-        setEditingCell(null);
-        setEditingValue('');
-    };
-
-    // Handle paste event for bulk data entry
-    const handlePaste = (e, rowId, field) => {
-        e.preventDefault();
-        const pastedData = e.clipboardData.getData('text');
-        const rows = pastedData.split('\n').filter(row => row.trim());
-        const values = rows[0].split('\t');
-
-        if (values.length > 1 || rows.length > 1) {
-            // Multi-cell paste
-            const fieldIndex = allFields.indexOf(field);
-            const rowIndex = data.findIndex(r => r.id === rowId);
-
-            const newData = [...data];
-
-            rows.forEach((row, rIdx) => {
-                const cells = row.split('\t');
-                const targetRowIndex = rowIndex + rIdx;
-
-                if (targetRowIndex >= newData.length) {
-                    const newRow = { id: Date.now() + rIdx };
-                    allFields.forEach(f => {
-                        if (currentFields.complex.includes(f) || currentFields.arrays.includes(f)) {
-                            newRow[f] = [];
-                        } else if (f === 'isDead') {
-                            newRow[f] = false;
-                        } else {
-                            newRow[f] = '';
-                        }
-                    });
-                    if (entityType === 'individuals') {
-                        newRow.firstName = '';
-                        newRow.middleName = '';
-                        newRow.lastName = '';
-                    }
-                    newData.push(newRow);
-                }
-
-                cells.forEach((cell, cIdx) => {
-                    const targetFieldIndex = fieldIndex + cIdx;
-                    if (targetFieldIndex < allFields.length) {
-                        const targetField = allFields[targetFieldIndex];
-
-                        if (targetField === 'fullName' && entityType === 'individuals') {
-                            // Parse full name and store the components
-                            const nameParts = parseFullName(cell.trim());
-                            Object.assign(newData[targetRowIndex], nameParts);
-                        } else if (targetField === 'datesOfBirth' || targetField === 'datesOfDeath') {
-                            newData[targetRowIndex][targetField] = parseDates(cell);
-                        } else if (currentFields.complex.includes(targetField)) {
-                            // Parse complex field data
-                            newData[targetRowIndex][targetField] = parseComplexFieldData(targetField, cell);
-                        } else if (targetField === 'isDead') {
-                            newData[targetRowIndex][targetField] = cell.toLowerCase() === 'true' || cell === '1';
-                        } else if (currentFields.arrays.includes(targetField)) {
-                            // Handle array fields by splitting on comma
-                            newData[targetRowIndex][targetField] = cell.split(',').map(v => v.trim()).filter(v => v);
-                        } else {
-                            newData[targetRowIndex][targetField] = cell.trim();
-                        }
-                    }
-                });
+    const handleCellEdit = (rowIndex, colIndex, value) => {
+        const newData = [...data];
+        if (!newData[rowIndex]) {
+            newData[rowIndex] = { id: Date.now() + rowIndex };
+            excelColumns.forEach(col => {
+                newData[rowIndex][col] = '';
             });
-
-            setData(newData);
-            cancelEdit();
-        } else {
-            // Single cell paste
-            if (field === 'fullName') {
-                setEditingValue(values[0]);
-            } else if (field === 'datesOfBirth' || field === 'datesOfDeath') {
-                const dates = parseDates(values[0]);
-                setData(prev => prev.map(row =>
-                    row.id === rowId
-                        ? { ...row, [field]: dates }
-                        : row
-                ));
-                cancelEdit();
-            } else if (currentFields.complex.includes(field)) {
-                // Handle complex field paste
-                const parsedData = parseComplexFieldData(field, values[0]);
-                setData(prev => prev.map(row =>
-                    row.id === rowId
-                        ? { ...row, [field]: parsedData }
-                        : row
-                ));
-                cancelEdit();
-            } else {
-                setEditingValue(values[0]);
-            }
         }
+        newData[rowIndex][excelColumns[colIndex]] = value;
+        setData(newData);
     };
 
-    // Handle table-level paste for bulk operations
-    const handleTablePaste = (e) => {
-        if (editingCell) return; // Don't handle if already editing
-
+    // Handle paste event
+    const handlePaste = (e) => {
         e.preventDefault();
         const pastedData = e.clipboardData.getData('text');
-        const rows = pastedData.split('\n').filter(row => row.trim());
+        const rows = pastedData.split('\n').map(row => row.split('\t'));
 
-        if (rows.length === 0) return;
+        let startRow = 0;
+        let startCol = 0;
+
+        if (selectedCells.size > 0) {
+            const firstCell = Array.from(selectedCells).sort()[0];
+            [startRow, startCol] = firstCell.split('-').map(Number);
+        }
 
         const newData = [...data];
 
-        rows.forEach((row, rIdx) => {
-            const cells = row.split('\t');
-            const newRow = { id: Date.now() + rIdx };
-
-            allFields.forEach((field, fIdx) => {
-                const cellValue = cells[fIdx] || '';
-
-                if (field === 'fullName' && entityType === 'individuals') {
-                    // Parse full name and store the components
-                    const nameParts = parseFullName(cellValue.trim());
-                    Object.assign(newRow, nameParts);
-                } else if (field === 'datesOfBirth' || field === 'datesOfDeath') {
-                    newRow[field] = parseDates(cellValue);
-                } else if (currentFields.complex.includes(field)) {
-                    newRow[field] = parseComplexFieldData(field, cellValue);
-                } else if (field === 'isDead') {
-                    newRow[field] = cellValue ? (cellValue.toLowerCase() === 'true' || cellValue === '1') : false;
-                } else if (currentFields.arrays.includes(field)) {
-                    newRow[field] = cellValue ? cellValue.split(',').map(v => v.trim()).filter(v => v) : [];
-                } else {
-                    newRow[field] = cellValue.trim();
-                }
+        const neededRows = startRow + rows.length;
+        while (newData.length < neededRows) {
+            const newRow = { id: Date.now() + newData.length };
+            excelColumns.forEach(col => {
+                newRow[col] = '';
             });
-
-            // Ensure all fields have default values
-            allFields.forEach(field => {
-                if (!(field in newRow)) {
-                    if (currentFields.complex.includes(field) || currentFields.arrays.includes(field)) {
-                        newRow[field] = [];
-                    } else if (field === 'isDead') {
-                        newRow[field] = false;
-                    } else {
-                        newRow[field] = '';
-                    }
-                }
-            });
-
-            if (entityType === 'individuals' && !('firstName' in newRow)) {
-                newRow.firstName = '';
-                newRow.middleName = '';
-                newRow.lastName = '';
-            }
-
+            newRow['qr'] = mode;
             newData.push(newRow);
+        }
+
+        rows.forEach((row, rIdx) => {
+            const targetRow = startRow + rIdx;
+            row.forEach((cell, cIdx) => {
+                const targetCol = startCol + cIdx;
+                if (targetCol < excelColumns.length) {
+                    newData[targetRow][excelColumns[targetCol]] = cell.trim();
+                }
+            });
         });
 
         setData(newData);
     };
 
-    // Modal handlers
-    const openModal = (rowId, field) => {
-        const row = data.find(r => r.id === rowId);
-        setModalState({
-            rowId,
-            field,
-            items: row[field] || []
+    // Handle copy event
+    const handleCopy = (e) => {
+        if (selectedCells.size === 0) return;
+
+        e.preventDefault();
+
+        const cells = Array.from(selectedCells).map(cell => {
+            const [row, col] = cell.split('-').map(Number);
+            return { row, col };
         });
-    };
 
-    const saveModalData = () => {
-        setData(prev => prev.map(row =>
-            row.id === modalState.rowId
-                ? { ...row, [modalState.field]: modalState.items }
-                : row
-        ));
-        setModalState(null);
-    };
+        const minRow = Math.min(...cells.map(c => c.row));
+        const maxRow = Math.max(...cells.map(c => c.row));
+        const minCol = Math.min(...cells.map(c => c.col));
+        const maxCol = Math.max(...cells.map(c => c.col));
 
-    // Complex field modal content
-    const renderModalContent = () => {
-        if (!modalState) return null;
-
-        const { field, items } = modalState;
-
-        if (field === 'addresses') {
-            return (
-                <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">Edit Addresses</h3>
-                    {items.map((address, idx) => (
-                        <div key={idx} className="border rounded p-4 space-y-2">
-                            <div className="flex justify-between">
-                                <select
-                                    value={address.addressType || ''}
-                                    onChange={(e) => {
-                                        const newItems = [...items];
-                                        newItems[idx] = { ...address, addressType: e.target.value };
-                                        setModalState({ ...modalState, items: newItems });
-                                    }}
-                                    className="border rounded px-2 py-1"
-                                >
-                                    <option value="">Select Type</option>
-                                    {addressTypesIndividual.map(type => (
-                                        <option key={type} value={type}>{type}</option>
-                                    ))}
-                                </select>
-                                <button
-                                    onClick={() => {
-                                        const newItems = items.filter((_, i) => i !== idx);
-                                        setModalState({ ...modalState, items: newItems });
-                                    }}
-                                    className="text-red-500 hover:text-red-700"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
-                            </div>
-                            <input
-                                placeholder="Country ID (required)"
-                                type="number"
-                                value={address.countryId || ''}
-                                onChange={(e) => {
-                                    const newItems = [...items];
-                                    newItems[idx] = { ...address, countryId: parseInt(e.target.value) || '' };
-                                    setModalState({ ...modalState, items: newItems });
-                                }}
-                                className="w-full border rounded px-2 py-1"
-                            />
-                            <input
-                                placeholder="Address Line 1"
-                                value={address.line1 || ''}
-                                onChange={(e) => {
-                                    const newItems = [...items];
-                                    newItems[idx] = { ...address, line1: e.target.value };
-                                    setModalState({ ...modalState, items: newItems });
-                                }}
-                                className="w-full border rounded px-2 py-1"
-                            />
-                            <input
-                                placeholder="Address Line 2"
-                                value={address.line2 || ''}
-                                onChange={(e) => {
-                                    const newItems = [...items];
-                                    newItems[idx] = { ...address, line2: e.target.value };
-                                    setModalState({ ...modalState, items: newItems });
-                                }}
-                                className="w-full border rounded px-2 py-1"
-                            />
-                            <div className="grid grid-cols-2 gap-2">
-                                <input
-                                    placeholder="City"
-                                    value={address.city || ''}
-                                    onChange={(e) => {
-                                        const newItems = [...items];
-                                        newItems[idx] = { ...address, city: e.target.value };
-                                        setModalState({ ...modalState, items: newItems });
-                                    }}
-                                    className="border rounded px-2 py-1"
-                                />
-                                <input
-                                    placeholder="County"
-                                    value={address.county || ''}
-                                    onChange={(e) => {
-                                        const newItems = [...items];
-                                        newItems[idx] = { ...address, county: e.target.value };
-                                        setModalState({ ...modalState, items: newItems });
-                                    }}
-                                    className="border rounded px-2 py-1"
-                                />
-                            </div>
-                            <div className="grid grid-cols-2 gap-2">
-                                <input
-                                    placeholder="County Abbrev"
-                                    value={address.countyAbbrev || ''}
-                                    onChange={(e) => {
-                                        const newItems = [...items];
-                                        newItems[idx] = { ...address, countyAbbrev: e.target.value };
-                                        setModalState({ ...modalState, items: newItems });
-                                    }}
-                                    className="border rounded px-2 py-1"
-                                />
-                                <input
-                                    placeholder="Postcode"
-                                    value={address.postcode || ''}
-                                    onChange={(e) => {
-                                        const newItems = [...items];
-                                        newItems[idx] = { ...address, postcode: e.target.value };
-                                        setModalState({ ...modalState, items: newItems });
-                                    }}
-                                    className="border rounded px-2 py-1"
-                                />
-                            </div>
-                            <label className="flex items-center space-x-2">
-                                <input
-                                    type="checkbox"
-                                    checked={address.deleted || false}
-                                    onChange={(e) => {
-                                        const newItems = [...items];
-                                        newItems[idx] = { ...address, deleted: e.target.checked };
-                                        setModalState({ ...modalState, items: newItems });
-                                    }}
-                                />
-                                <span>Deleted</span>
-                            </label>
-                        </div>
-                    ))}
-                    <button
-                        onClick={() => {
-                            const newItems = [...items, {
-                                addressType: 'Operating',
-                                countryId: '',
-                                line1: '',
-                                line2: '',
-                                city: '',
-                                county: '',
-                                countyAbbrev: '',
-                                postcode: '',
-                                deleted: false
-                            }];
-                            setModalState({ ...modalState, items: newItems });
-                        }}
-                        className="flex items-center space-x-2 text-blue-600 hover:text-blue-800"
-                    >
-                        <Plus size={16} /> <span>Add Address</span>
-                    </button>
-                </div>
-            );
+        const copyData = [];
+        for (let r = minRow; r <= maxRow; r++) {
+            const rowData = [];
+            for (let c = minCol; c <= maxCol; c++) {
+                rowData.push(data[r]?.[excelColumns[c]] || '');
+            }
+            copyData.push(rowData.join('\t'));
         }
 
-        if (field === 'datesOfBirth' || field === 'datesOfDeath') {
-            return (
-                <div className="space-y-4">
-                    <h3 className="text-lg font-semibold">Edit {field === 'datesOfBirth' ? 'Dates of Birth' : 'Dates of Death'}</h3>
-                    {items.map((date, idx) => (
-                        <div key={idx} className="flex items-center space-x-2">
-                            <input
-                                type="number"
-                                placeholder="Day"
-                                min="1"
-                                max="31"
-                                value={date.day || ''}
-                                onChange={(e) => {
-                                    const newItems = [...items];
-                                    newItems[idx] = { ...date, day: parseInt(e.target.value) || null };
-                                    setModalState({ ...modalState, items: newItems });
-                                }}
-                                className="w-20 border rounded px-2 py-1"
-                            />
-                            <input
-                                type="number"
-                                placeholder="Month"
-                                min="1"
-                                max="12"
-                                value={date.month || ''}
-                                onChange={(e) => {
-                                    const newItems = [...items];
-                                    newItems[idx] = { ...date, month: parseInt(e.target.value) || null };
-                                    setModalState({ ...modalState, items: newItems });
-                                }}
-                                className="w-20 border rounded px-2 py-1"
-                            />
-                            <input
-                                type="number"
-                                placeholder="Year"
-                                min="1900"
-                                value={date.year || ''}
-                                onChange={(e) => {
-                                    const newItems = [...items];
-                                    newItems[idx] = { ...date, year: parseInt(e.target.value) || null };
-                                    setModalState({ ...modalState, items: newItems });
-                                }}
-                                className="w-24 border rounded px-2 py-1"
-                            />
-                            <button
-                                onClick={() => {
-                                    const newItems = items.filter((_, i) => i !== idx);
-                                    setModalState({ ...modalState, items: newItems });
-                                }}
-                                className="text-red-500 hover:text-red-700"
-                            >
-                                <Trash2 size={16} />
-                            </button>
-                        </div>
-                    ))}
-                    <button
-                        onClick={() => {
-                            const newItems = [...items, { day: null, month: null, year: null }];
-                            setModalState({ ...modalState, items: newItems });
-                        }}
-                        className="flex items-center space-x-2 text-blue-600 hover:text-blue-800"
-                    >
-                        <Plus size={16} /> <span>Add Date</span>
-                    </button>
-                </div>
-            );
+        e.clipboardData.setData('text/plain', copyData.join('\n'));
+    };
+
+    // Helper functions
+    const checkLen = (text, n = 1) => {
+        return text && text.toString().length >= n;
+    };
+
+    const safeInt = (value) => {
+        const parsed = parseInt(value);
+        return isNaN(parsed) ? null : parsed;
+    };
+
+    const cleanString = (str) => {
+        return str ? str.toString().replace(/\./g, '').trim() : '';
+    };
+
+    const titleCase = (str) => {
+        return str ? str.toString().toLowerCase().replace(/\b\w/g, l => l.toUpperCase()) : '';
+    };
+
+    // Split name function
+    const splitName = (fullName) => {
+        const cleaned = titleCase(cleanString(fullName));
+        const parts = cleaned.split(/\s+/).filter(p => p);
+
+        let firstName = '';
+        let middleName = '';
+        let lastName = '';
+
+        if (parts.length === 1) {
+            lastName = parts[0];
+        } else if (parts.length === 2) {
+            firstName = parts[0];
+            lastName = parts[1];
+        } else if (parts.length >= 3) {
+            firstName = parts[0];
+            middleName = parts.slice(1, -1).join(' ');
+            lastName = parts[parts.length - 1];
         }
 
-        // Generic array handler for other complex fields
-        return (
-            <div className="space-y-4">
-                <h3 className="text-lg font-semibold">Edit {field}</h3>
-                {items.map((item, idx) => (
-                    <div key={idx} className="flex items-center space-x-2">
-                        <input
-                            value={typeof item === 'string' ? item : JSON.stringify(item)}
-                            onChange={(e) => {
-                                const newItems = [...items];
-                                newItems[idx] = e.target.value;
-                                setModalState({ ...modalState, items: newItems });
-                            }}
-                            className="flex-1 border rounded px-2 py-1"
-                        />
-                        <button
-                            onClick={() => {
-                                const newItems = items.filter((_, i) => i !== idx);
-                                setModalState({ ...modalState, items: newItems });
-                            }}
-                            className="text-red-500 hover:text-red-700"
-                        >
-                            <Trash2 size={16} />
-                        </button>
-                    </div>
-                ))}
-                <button
-                    onClick={() => {
-                        const newItems = [...items, ''];
-                        setModalState({ ...modalState, items: newItems });
-                    }}
-                    className="flex items-center space-x-2 text-blue-600 hover:text-blue-800"
-                >
-                    <Plus size={16} /> <span>Add Item</span>
-                </button>
-            </div>
+        return { firstName, middleName, lastName };
+    };
+
+    // Parse date helper
+    const parseDate = (day, month, year) => {
+        const d = safeInt(day);
+        const m = safeInt(month);
+        const y = safeInt(year);
+
+        const date = {};
+        if (d !== null) date.day = d;
+        if (m !== null) date.month = m;
+        if (y !== null) date.year = y;
+
+        return Object.keys(date).length > 0 ? date : null;
+    };
+
+    // Convert to JSON format - CREATE
+    const convertToJsonCreate = () => {
+        const individuals = [];
+
+        const createRows = data.filter(row =>
+            row.qr === 'create' &&
+            row.name &&
+            row.name.toString().trim() !== ''
         );
-    };
 
-    // Clean JSON generation
-    const generateCleanJson = () => {
-        const cleanData = data.map(row => {
-            const cleanRow = {};
+        // Remove duplicates by name
+        const uniqueRows = [];
+        const seenNames = new Set();
+        createRows.forEach(row => {
+            const name = cleanString(row.name);
+            if (!seenNames.has(name)) {
+                seenNames.add(name);
+                uniqueRows.push(row);
+            }
+        });
 
-            Object.entries(row).forEach(([key, value]) => {
-                if (key === 'id' || key === 'fullName') return; // Skip internal fields
+        uniqueRows.forEach(row => {
+            const person = {};
 
-                if (value === '' || value === null || value === undefined) return;
-                if (typeof value === 'boolean' && value === false && key !== 'isDead') return; // Keep isDead even if false
-                if (Array.isArray(value) && value.length === 0) return;
-                if (typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 0) return;
+            // Parse name
+            const { firstName, middleName, lastName } = splitName(row.name);
+            if (firstName) person.firstName = firstName;
+            if (middleName) person.middleName = middleName;
+            if (lastName) person.lastName = lastName;
 
-                if (Array.isArray(value)) {
-                    const cleanArray = value.filter(item => {
-                        if (typeof item === 'string' && item.trim() === '') return false;
-                        if (typeof item === 'object') {
-                            const cleanObj = {};
-                            Object.entries(item).forEach(([k, v]) => {
-                                if (v !== '' && v !== null && v !== undefined && !(typeof v === 'boolean' && v === false && k !== 'deleted')) {
-                                    cleanObj[k] = v;
-                                }
-                            });
-                            return Object.keys(cleanObj).length > 0;
-                        }
-                        return true;
-                    });
+            // Gender & nationalities
+            if (row.gender) person.gender = row.gender;
+            if (row.country) person.nationalities = [row.country.toString().trim()];
 
-                    if (cleanArray.length > 0) {
-                        cleanRow[key] = cleanArray;
+            // Aliases
+            const aliases = [];
+
+            // Original Script Name if available
+            if (row.osn) {
+                const osnParts = splitName(row.osn);
+                const osnAlias = { type: 'Original Script Name' };
+                if (osnParts.firstName) osnAlias.firstName = osnParts.firstName;
+                if (osnParts.middleName) osnAlias.middleName = osnParts.middleName;
+                if (osnParts.lastName) osnAlias.lastName = osnParts.lastName;
+                aliases.push(osnAlias);
+            }
+
+            // Name spelling variation (reversed order)
+            const alias1 = { type: 'Name Spelling Variation' };
+            if (lastName) alias1.firstName = lastName;
+            if (middleName) alias1.middleName = middleName;
+            if (firstName) alias1.lastName = firstName;
+            aliases.push(alias1);
+
+            // Nickname from alias field
+            if (row.alias) {
+                aliases.push({
+                    type: 'Nickname',
+                    firstName: titleCase(cleanString(row.alias))
+                });
+            }
+
+            // Nickname from alias2 field
+            if (row.alias2) {
+                aliases.push({
+                    type: 'Nickname',
+                    firstName: titleCase(cleanString(row.alias2))
+                });
+            }
+
+            if (aliases.length > 0) person.aliases = aliases;
+
+            // Evidences
+            const evidence = {};
+            const url = row.url ? row.url.toString().trim() : '';
+            let pdfName = row.pdf_names ? row.pdf_names.toString().trim() : '';
+            const articleId = row.article_id ? row.article_id.toString().trim() : '';
+
+            if (pdfName && !pdfName.toLowerCase().endsWith('.pdf')) {
+                pdfName += '.pdf';
+            }
+
+            if (articleId) evidence.articleId = articleId;
+
+            if (pdfName) {
+                evidence.bulkAssetFilename = pdfName;
+                if (url) evidence.originalUrl = url;
+            } else if (url) {
+                evidence.bulkAssetUrl = url;
+            }
+
+            // Only add these fields if we have evidence content
+            if (pdfName || url || articleId) {
+                evidence.copyrighted = true;
+                evidence.sourceOfWealth = false;
+                evidence.credibility = 'High';
+                evidence.language = 'eng';
+
+                // Evidence date - check multiple possible date columns
+                let evidenceDate = null;
+                if (row.event_date) {
+                    const eventDate = new Date(row.event_date);
+                    if (!isNaN(eventDate)) {
+                        evidenceDate = {
+                            day: eventDate.getDate(),
+                            month: eventDate.getMonth() + 1,
+                            year: eventDate.getFullYear()
+                        };
                     }
                 } else {
-                    cleanRow[key] = value;
+                    evidenceDate = parseDate(row.day, row.month, row.year);
                 }
-            });
 
-            return cleanRow;
-        }).filter(row => Object.keys(row).length > 0);
+                if (evidenceDate) evidence.evidenceDate = evidenceDate;
 
-        const result = {
-            [entityType]: cleanData
-        };
+                // Publication date
+                const pubDate = parseDate(row.day, row.month, row.year);
+                if (pubDate) evidence.publicationDate = pubDate;
 
-        setGeneratedJson(JSON.stringify(result, null, 2));
+                if (row.summary) {
+                    evidence.summary = row.summary.toString().trim();
+                } else if (row.snippet) {
+                    evidence.summary = row.snippet.toString().trim();
+                }
+
+                person.evidences = [evidence];
+            }
+
+            // Addresses
+            const address = {};
+            if (row.line1) address.line1 = titleCase(cleanString(row.line1));
+            if (row.line2) address.line2 = titleCase(cleanString(row.line2));
+            if (row.city) address.city = titleCase(cleanString(row.city));
+            if (row.county) address.county = titleCase(cleanString(row.county));
+            if (row.state) address.city = titleCase(cleanString(row.state)); // Map state to city if no city
+
+            const countryId = safeInt(row.country_id);
+            if (countryId !== null) address.countryId = countryId;
+
+            // Only add address if it has content
+            if (Object.keys(address).length > 0) {
+                address.addressType = 'Business';
+                person.addresses = [address];
+            }
+
+            // Handle based on profile type
+            if (profileType === 'pep') {
+                // PEP specific fields
+                if (row.pep_tier) person.pepTier = row.pep_tier;
+
+                // Current PEP entries
+                if (row.pep_segment || row.pep_position || row.pep_category) {
+                    const pepEntry = {};
+                    if (row.pep_segment) pepEntry.segment = row.pep_segment;
+                    if (row.pep_position) pepEntry.position = row.pep_position;
+                    if (row.pep_category) pepEntry.category = row.pep_category;
+
+                    // Date from/to for PEP
+                    const dateFrom = parseDate(row.day_from, row.month_from, row.year_from);
+                    const dateTo = parseDate(row.day_to, row.month_to, row.year_to);
+
+                    if (dateFrom) pepEntry.dateFrom = dateFrom;
+                    if (dateTo) pepEntry.dateTo = dateTo;
+
+                    person.currentPepEntries = [pepEntry];
+                }
+            } else {
+                // REL entries (for non-PEP profiles)
+                const relEntry = {};
+
+                // Only add category/subcategory if provided
+                if (row.rel_category) relEntry.category = row.rel_category;
+                if (row.rel_subcategory) relEntry.subcategory = row.rel_subcategory;
+                if (row.list_name && !row.rel_subcategory) relEntry.subcategory = row.list_name;
+
+                const event = {};
+
+                // Event date
+                const eventDate = parseDate(row.day, row.month, row.year);
+                if (eventDate) event.date = eventDate;
+
+                // Event type
+                if (row.event_type) {
+                    event.type = row.event_type;
+                } else if (row.type) {
+                    event.type = row.type;
+                }
+
+                // Event evidences
+                if (articleId) {
+                    event.evidences = [{ articleId: articleId }];
+                } else if (pdfName) {
+                    event.evidences = [{ bulkAssetFilename: pdfName }];
+                } else if (url) {
+                    event.evidences = [{ bulkAssetUrl: url }];
+                }
+
+                // Only add event if it has content
+                if (Object.keys(event).length > 0) {
+                    relEntry.events = [event];
+                }
+
+                // Only add REL entry if it has content
+                if (Object.keys(relEntry).length > 0) {
+                    person.relEntries = [relEntry];
+                }
+            }
+
+            individuals.push(person);
+        });
+
+        return { individuals };
+    };
+
+    // Convert to JSON format - UPDATE
+    const convertToJsonUpdate = () => {
+        const individuals = [];
+
+        const updateRows = data.filter(row =>
+            row.qr &&
+            row.qr !== 'create' &&
+            row.qr !== 'no-update' &&
+            row.qr.toString().trim() !== ''
+        );
+
+        // Remove duplicates by qr (reference number)
+        const uniqueRows = [];
+        const seenQRs = new Set();
+        updateRows.forEach(row => {
+            const qr = row.qr.toString().trim();
+            if (!seenQRs.has(qr)) {
+                seenQRs.add(qr);
+                uniqueRows.push(row);
+            }
+        });
+
+        uniqueRows.forEach(row => {
+            const person = {};
+
+            person.referenceNumber = row.qr.toString();
+
+            // Evidence
+            const evidence = {};
+            const url = row.url ? row.url.toString().trim() : '';
+            let pdfName = row.pdf_names ? row.pdf_names.toString().trim() : '';
+            const articleId = row.article_id ? row.article_id.toString().trim() : '';
+
+            if (pdfName && !pdfName.toLowerCase().endsWith('.pdf')) {
+                pdfName += '.pdf';
+            }
+
+            if (articleId) evidence.articleId = articleId;
+
+            if (pdfName) {
+                evidence.bulkAssetFilename = pdfName;
+                if (url) evidence.originalUrl = url;
+            } else if (url) {
+                evidence.bulkAssetUrl = url;
+            }
+
+            if (pdfName || url || articleId) {
+                evidence.copyrighted = true;
+                evidence.sourceOfWealth = false;
+                evidence.credibility = 'High';
+                evidence.language = 'eng';
+
+                // Evidence date
+                let evidenceDate = null;
+                if (row.event_date) {
+                    const eventDate = new Date(row.event_date);
+                    if (!isNaN(eventDate)) {
+                        evidenceDate = {
+                            day: eventDate.getDate(),
+                            month: eventDate.getMonth() + 1,
+                            year: eventDate.getFullYear()
+                        };
+                    }
+                } else {
+                    evidenceDate = parseDate(row.day, row.month, row.year);
+                }
+
+                if (evidenceDate) evidence.evidenceDate = evidenceDate;
+
+                // Publication date
+                if (row.publication_date) {
+                    const pubDate = parseDate(row.day, row.month, row.year);
+                    if (pubDate) evidence.publicationDate = pubDate;
+                }
+
+                if (row.summary) {
+                    evidence.summary = row.summary.toString().trim();
+                } else if (row.snippet) {
+                    evidence.summary = row.snippet.toString().trim();
+                }
+
+                person.evidences = [evidence];
+            }
+
+            // REL entries for updates
+            const relEntry = {};
+
+            if (row.rel_id) {
+                relEntry.id = row.rel_id.toString();
+            } else {
+                // Only add category/subcategory if provided
+                if (row.rel_category) relEntry.category = row.rel_category;
+                if (row.rel_subcategory) relEntry.subcategory = row.rel_subcategory;
+                if (row.list_name && !row.rel_subcategory) relEntry.subcategory = row.list_name;
+            }
+
+            const event = {};
+
+            // Event date
+            const eventDate = parseDate(row.day, row.month, row.year);
+            if (eventDate) event.date = eventDate;
+
+            // Event type with mapping
+            const eventTypeMap = {
+                'Asset Forfeiture/Seizure': 'Asset Freeze',
+                'Asset Forfeiture': 'Asset Freeze',
+                'Seizure': 'Asset Freeze'
+            };
+
+            const rawType = row.event_type || row.type || '';
+            if (rawType) {
+                event.type = eventTypeMap[rawType] || rawType;
+            }
+
+            // Event evidences
+            if (articleId) {
+                event.evidences = [{ articleId: articleId }];
+            } else if (pdfName) {
+                event.evidences = [{ bulkAssetFilename: pdfName }];
+            } else if (url) {
+                event.evidences = [{ bulkAssetUrl: url }];
+            }
+
+            if (Object.keys(event).length > 0) {
+                relEntry.events = [event];
+            }
+
+            if (Object.keys(relEntry).length > 0) {
+                person.relEntries = [relEntry];
+            }
+
+            individuals.push(person);
+        });
+
+        return { individuals };
+    };
+
+    // Generate clean JSON
+    const generateCleanJson = () => {
+        const result = mode === 'create' ? convertToJsonCreate() : convertToJsonUpdate();
+        setGeneratedJson(JSON.stringify(result, null, 4));
+    };
+
+    // Export JSON to file
+    const exportJsonFile = () => {
+        const result = mode === 'create' ? convertToJsonCreate() : convertToJsonUpdate();
+        const jsonString = JSON.stringify(result, null, 4);
+        const blob = new Blob([jsonString], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        const timestamp = new Date().toISOString().split('T')[0];
+        const prefix = profileType === 'pep' ? 'PEP' : 'REL';
+        link.download = `${prefix}_${mode.toUpperCase()}_${timestamp}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     const copyToClipboard = () => {
@@ -687,402 +591,238 @@ const BulkDataEntryPlatform = () => {
         setTimeout(() => setCopySuccess(false), 2000);
     };
 
-    // Cell rendering
-    const renderCell = (row, field) => {
-        const isEditing = editingCell?.rowId === row.id && editingCell?.field === field;
-        const value = row[field];
+    const addRows = (count = 10) => {
+        const newRows = initializeRows(count);
+        setData(prev => [...prev, ...newRows]);
+    };
 
-        if (isEditing) {
-            if (field === 'gender') {
-                return (
-                    <select
-                        value={editingValue}
-                        onChange={(e) => handleCellChange(e.target.value)}
-                        onBlur={saveCellValue}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveCellValue();
-                            if (e.key === 'Escape') cancelEdit();
-                        }}
-                        className="w-full px-1 py-0.5 border rounded"
-                        autoFocus
-                    >
-                        <option value="">Select</option>
-                        {genderOptions.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                    </select>
-                );
-            }
+    const renderCell = (row, col, rowIndex, colIndex) => {
+        const value = row[col] || '';
+        const cellKey = `${rowIndex}-${colIndex}`;
+        const isSelected = selectedCells.has(cellKey);
 
-            if (field === 'pepTier') {
-                return (
-                    <select
-                        value={editingValue}
-                        onChange={(e) => handleCellChange(e.target.value)}
-                        onBlur={saveCellValue}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveCellValue();
-                            if (e.key === 'Escape') cancelEdit();
-                        }}
-                        className="w-full px-1 py-0.5 border rounded"
-                        autoFocus
-                    >
-                        <option value="">Select</option>
-                        {pepTierOptions.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                    </select>
-                );
-            }
-
-            if (field === 'isDead') {
-                return (
-                    <input
-                        type="checkbox"
-                        checked={editingValue === true || editingValue === 'true'}
-                        onChange={(e) => handleCellChange(e.target.checked)}
-                        onBlur={saveCellValue}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveCellValue();
-                            if (e.key === 'Escape') cancelEdit();
-                        }}
-                        className="cursor-pointer"
-                        autoFocus
-                    />
-                );
-            }
-
-            if (field === 'nationalities') {
-                return (
-                    <input
-                        type="text"
-                        value={editingValue}
-                        onChange={(e) => handleCellChange(e.target.value)}
-                        onBlur={saveCellValue}
-                        onPaste={(e) => handlePaste(e, row.id, field)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveCellValue();
-                            if (e.key === 'Escape') cancelEdit();
-                            if (e.key === 'Tab') {
-                                e.preventDefault();
-                                saveCellValue();
-                                const fieldIndex = allFields.indexOf(field);
-                                if (fieldIndex < allFields.length - 1) {
-                                    const nextField = allFields[fieldIndex + 1];
-                                    if (!currentFields.complex.includes(nextField)) {
-                                        setTimeout(() => handleCellClick(row.id, nextField), 0);
-                                    }
-                                }
-                            }
-                        }}
-                        placeholder="e.g. US,GB,FR"
-                        className="w-full px-1 py-0.5 border rounded"
-                        autoFocus
-                    />
-                );
-            }
-
-            if (field === 'businessTypes') {
-                return (
-                    <input
-                        type="text"
-                        value={editingValue}
-                        onChange={(e) => handleCellChange(e.target.value)}
-                        onBlur={saveCellValue}
-                        onPaste={(e) => handlePaste(e, row.id, field)}
-                        onKeyDown={(e) => {
-                            if (e.key === 'Enter') saveCellValue();
-                            if (e.key === 'Escape') cancelEdit();
-                        }}
-                        placeholder="e.g. Bank,Trust Fund"
-                        className="w-full px-1 py-0.5 border rounded"
-                        autoFocus
-                    />
-                );
-            }
-
-            return (
-                <input
-                    type="text"
-                    value={editingValue}
-                    onChange={(e) => handleCellChange(e.target.value)}
-                    onBlur={saveCellValue}
-                    onPaste={(e) => handlePaste(e, row.id, field)}
-                    onKeyDown={(e) => {
-                        if (e.key === 'Enter') saveCellValue();
-                        if (e.key === 'Escape') cancelEdit();
-                        if (e.key === 'Tab') {
-                            e.preventDefault();
-                            saveCellValue();
-                            const fieldIndex = allFields.indexOf(field);
-                            if (fieldIndex < allFields.length - 1) {
-                                const nextField = allFields[fieldIndex + 1];
-                                if (!currentFields.complex.includes(nextField)) {
-                                    setTimeout(() => handleCellClick(row.id, nextField), 0);
-                                }
-                            }
-                        }
-                    }}
-                    className="w-full px-1 py-0.5 border rounded"
-                    autoFocus
-                />
-            );
-        }
-
-        if (currentFields.complex.includes(field)) {
-            const count = value?.length || 0;
-            return (
-                <div className="flex items-center justify-between group">
-                    <div
-                        className="flex-1 cursor-pointer min-h-[24px] flex items-center"
-                        onClick={() => handleCellClick(row.id, field)}
-                        onPaste={(e) => handlePaste(e, row.id, field)}
-                    >
-                        <span className="text-sm text-gray-600">{count} {field}</span>
-                        <span className="text-xs text-gray-400 ml-2 opacity-0 group-hover:opacity-100">
-              (paste here)
-            </span>
-                    </div>
-                    <button
-                        onClick={() => openModal(row.id, field)}
-                        className="px-2 py-0.5 text-xs bg-blue-500 text-white rounded hover:bg-blue-600"
-                    >
-                        <Edit2 size={12} />
-                    </button>
-                </div>
-            );
-        }
-
-        if (field === 'datesOfBirth' || field === 'datesOfDeath') {
-            const displayValue = Array.isArray(value)
-                ? value.map(d => d.year ? `${d.day || '?'}/${d.month || '?'}/${d.year}` : '').filter(d => d).join(', ')
-                : '';
-            return (
-                <div className="flex items-center justify-between group">
-                    <div
-                        onClick={() => handleCellClick(row.id, field)}
-                        onPaste={(e) => handlePaste(e, row.id, field)}
-                        className="flex-1 cursor-pointer truncate min-h-[24px] px-1"
-                    >
-                        {displayValue || <span className="text-gray-400">Click to edit</span>}
-                    </div>
-                    <button
-                        onClick={() => openModal(row.id, field)}
-                        className="px-2 py-0.5 text-xs bg-blue-500 text-white rounded hover:bg-blue-600 opacity-0 group-hover:opacity-100"
-                    >
-                        <Edit2 size={12} />
-                    </button>
-                </div>
-            );
-        }
-
-        if (currentFields.arrays.includes(field)) {
-            const displayValue = Array.isArray(value) ? value.join(', ') : '';
-            return (
-                <div
-                    onClick={() => handleCellClick(row.id, field)}
-                    onPaste={(e) => handlePaste(e, row.id, field)}
-                    className="cursor-pointer truncate min-h-[24px] px-1"
-                >
-                    {displayValue || <span className="text-gray-400">Click to edit</span>}
-                </div>
-            );
-        }
-
-        if (field === 'isDead') {
-            return (
-                <div
-                    onClick={() => handleCellClick(row.id, field)}
-                    className="cursor-pointer text-center min-h-[24px]"
-                >
-                    {value ? '✓' : ''}
-                </div>
-            );
-        }
-
-        if (field === 'fullName' && entityType === 'individuals') {
-            const displayName = row.firstName || row.lastName
-                ? `${row.firstName} ${row.middleName} ${row.lastName}`.trim().replace(/\s+/g, ' ')
-                : '';
-            return (
-                <div
-                    onClick={() => handleCellClick(row.id, field)}
-                    onPaste={(e) => handlePaste(e, row.id, field)}
-                    className="cursor-pointer truncate min-h-[24px] px-1"
-                >
-                    {displayName || <span className="text-gray-400">Click to edit full name</span>}
-                </div>
-            );
-        }
+        // Special styling for qr column
+        const isQrColumn = col === 'qr';
+        const cellStyle = isQrColumn && mode === 'create' ? 'bg-green-50' : 'bg-white';
 
         return (
-            <div
-                onClick={() => handleCellClick(row.id, field)}
-                onPaste={(e) => handlePaste(e, row.id, field)}
-                className="cursor-pointer truncate min-h-[24px] px-1"
+            <td
+                key={cellKey}
+                className={`border border-gray-300 px-1 py-0.5 text-xs relative ${
+                    isSelected ? 'bg-blue-100' : cellStyle
+                } hover:bg-gray-50`}
+                onClick={(e) => handleCellClick(rowIndex, colIndex, e)}
+                onDoubleClick={() => {
+                    const input = document.querySelector(`#cell-${rowIndex}-${colIndex}`);
+                    if (input) input.focus();
+                }}
             >
-                {value || <span className="text-gray-400">Click to edit</span>}
-            </div>
+                <input
+                    id={`cell-${rowIndex}-${colIndex}`}
+                    type="text"
+                    value={value}
+                    onChange={(e) => handleCellEdit(rowIndex, colIndex, e.target.value)}
+                    className="w-full bg-transparent outline-none"
+                    onFocus={() => {
+                        setSelectedCells(new Set([cellKey]));
+                        setSelectionStart(cellKey);
+                    }}
+                />
+            </td>
         );
     };
 
-    return (
-        <div className="p-6 max-w-full">
-            {/* Header */}
-            <div className="mb-6">
-                <h1 className="text-2xl font-bold mb-4">ARI Bulk Data Entry Tool</h1>
+    // Highlight relevant columns based on profile type
+    const getColumnStyle = (col) => {
+        if (profileType === 'pep') {
+            if (['pep_tier', 'pep_segment', 'pep_position', 'pep_category'].includes(col)) {
+                return 'bg-purple-100';
+            }
+        } else {
+            if (['rel_category', 'rel_subcategory', 'list_name', 'event_type'].includes(col)) {
+                return 'bg-blue-100';
+            }
+        }
+        if (col === 'qr') return 'bg-yellow-100';
+        return 'bg-gray-200';
+    };
 
-                {/* Entity Type Toggle */}
-                <div className="flex items-center space-x-4 mb-4">
+    return (
+        <div className="p-4 max-w-full">
+            {/* Header */}
+            <div className="mb-4">
+                <h1 className="text-xl font-bold mb-4">Flexible Excel to JSON Converter</h1>
+
+                {/* Controls */}
+                <div className="flex items-center space-x-4 mb-4 flex-wrap gap-2">
+                    {/* Profile Type Toggle */}
                     <div className="flex items-center bg-gray-100 rounded-lg p-1">
                         <button
-                            onClick={() => setEntityType('individuals')}
-                            className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${
-                                entityType === 'individuals'
-                                    ? 'bg-white shadow-sm text-blue-600'
+                            onClick={() => setProfileType('rel')}
+                            className={`flex items-center space-x-1 px-3 py-1.5 rounded-md transition-colors text-sm ${
+                                profileType === 'rel'
+                                    ? 'bg-white shadow-sm text-blue-600 font-medium'
                                     : 'text-gray-600 hover:text-gray-800'
                             }`}
                         >
-                            <Users size={18} />
-                            <span>Individuals</span>
+                            <Briefcase size={16} />
+                            <span>REL</span>
                         </button>
                         <button
-                            onClick={() => setEntityType('businesses')}
-                            className={`flex items-center space-x-2 px-4 py-2 rounded-md transition-colors ${
-                                entityType === 'businesses'
-                                    ? 'bg-white shadow-sm text-blue-600'
+                            onClick={() => setProfileType('pep')}
+                            className={`flex items-center space-x-1 px-3 py-1.5 rounded-md transition-colors text-sm ${
+                                profileType === 'pep'
+                                    ? 'bg-white shadow-sm text-purple-600 font-medium'
                                     : 'text-gray-600 hover:text-gray-800'
                             }`}
                         >
-                            <Building2 size={18} />
-                            <span>Businesses</span>
+                            <Users size={16} />
+                            <span>PEP</span>
+                        </button>
+                    </div>
+
+                    {/* Create/Update Mode */}
+                    <div className="flex items-center bg-gray-100 rounded-lg p-1">
+                        <button
+                            onClick={() => setMode('create')}
+                            className={`px-3 py-1.5 rounded-md transition-colors text-sm ${
+                                mode === 'create'
+                                    ? 'bg-white shadow-sm text-green-600 font-medium'
+                                    : 'text-gray-600 hover:text-gray-800'
+                            }`}
+                        >
+                            Create
+                        </button>
+                        <button
+                            onClick={() => setMode('update')}
+                            className={`px-3 py-1.5 rounded-md transition-colors text-sm ${
+                                mode === 'update'
+                                    ? 'bg-white shadow-sm text-blue-600 font-medium'
+                                    : 'text-gray-600 hover:text-gray-800'
+                            }`}
+                        >
+                            Update
                         </button>
                     </div>
 
                     <button
-                        onClick={addNewRow}
-                        className="flex items-center space-x-2 px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600"
+                        onClick={() => addRows(10)}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-green-500 text-white rounded hover:bg-green-600 text-sm"
                     >
-                        <Plus size={18} />
-                        <span>Add Row</span>
+                        <Plus size={16} />
+                        <span>Add 10 Rows</span>
                     </button>
 
                     <button
                         onClick={generateCleanJson}
-                        className="flex items-center space-x-2 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
                     >
                         <span>Generate JSON</span>
                     </button>
+
+                    <button
+                        onClick={exportJsonFile}
+                        className="flex items-center space-x-1 px-3 py-1.5 bg-purple-500 text-white rounded hover:bg-purple-600 text-sm"
+                    >
+                        <FileDown size={16} />
+                        <span>Export JSON</span>
+                    </button>
                 </div>
 
-                <p className="text-sm text-gray-600">
-                    <strong>Quick Start:</strong> Copy your Excel data and paste directly into the table area.
-                    Full names are automatically split into first, middle, and last names.
-                </p>
-                <div className="text-xs text-gray-500 mt-1 space-y-1">
-                    <p>• <strong>Bulk Paste:</strong> Select all your data in Excel → Copy → Click anywhere in the table → Paste</p>
-                    <p>• <strong>Full Names:</strong> Paste as "John Michael Doe" → automatically splits to firstName, middleName, lastName</p>
-                    <p>• <strong>Complex Fields:</strong> You can now paste directly into aliases, addresses, evidences fields!</p>
-                    <p>• <strong>Addresses:</strong> Paste as "Operating,52,Main St,,Sofia,Sofia,SF,1111" or use Edit button</p>
-                    <p>• <strong>Dates:</strong> Paste as "1/2/2000" or "1/2/2000;5/6/2001" for multiple dates</p>
-                    <p>• <strong>Nationalities:</strong> Use country codes like "US,GB,FR" (comma-separated)</p>
-                    <p>• <strong>Aliases:</strong> Paste multiple aliases separated by newlines, semicolons, or pipes</p>
+                <div className="text-xs text-gray-600 space-y-1 bg-gray-50 p-3 rounded">
+                    <p className="font-semibold">
+                        Current Mode: <span className={profileType === 'pep' ? 'text-purple-600' : 'text-blue-600'}>{profileType.toUpperCase()}</span> -
+                        <span className={mode === 'create' ? 'text-green-600' : 'text-blue-600'}> {mode.toUpperCase()}</span>
+                    </p>
+                    <p>📋 <strong>Flexible Data Handling:</strong> The system adapts to whatever data you provide</p>
+                    <p>⚡ <strong>Quick Tips:</strong></p>
+                    <ul className="ml-4 space-y-0.5">
+                        <li>• <strong>REL Mode:</strong> Uses rel_category, rel_subcategory, event_type fields</li>
+                        <li>• <strong>PEP Mode:</strong> Uses pep_tier, pep_segment, pep_position fields</li>
+                        <li>• Names can be in 'name' column or 'osn' (Original Script Name)</li>
+                        <li>• Dates can be in multiple formats - the system will find them</li>
+                        <li>• Empty fields are automatically excluded from JSON</li>
+                    </ul>
                 </div>
             </div>
 
-            {/* Data Table */}
-            <div className="overflow-x-auto border rounded-lg" onPaste={handleTablePaste}>
-                <table className="w-full">
-                    <thead>
-                    <tr className="bg-gray-50 border-b">
-                        <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                            Actions
+            {/* Excel-like Table */}
+            <div
+                className="overflow-auto border-2 border-gray-400"
+                style={{ maxHeight: '60vh' }}
+                onPaste={handlePaste}
+                onCopy={handleCopy}
+                ref={tableRef}
+            >
+                <table className="w-full border-collapse">
+                    <thead className="sticky top-0 z-10">
+                    <tr>
+                        <th className="border border-gray-400 bg-gray-200 px-2 py-1 text-xs font-medium text-center w-12">
+                            #
                         </th>
-                        {allFields.map(field => (
-                            <th key={field} className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
-                                {field}
-                                {(field === 'firstName' || field === 'lastName' || field === 'gender' ||
-                                    (field === 'nationalities' && entityType === 'individuals') ||
-                                    field === 'name') && <span className="text-red-500 ml-1">*</span>}
+                        {excelColumns.map((col, idx) => (
+                            <th
+                                key={col}
+                                className={`border border-gray-400 px-2 py-1 text-xs font-medium whitespace-nowrap ${
+                                    getColumnStyle(col)
+                                }`}
+                                style={{ minWidth: col === 'summary' || col === 'snippet' ? '200px' : '100px' }}
+                            >
+                                {col}
+                                {col === 'qr' && <span className="text-red-500 ml-1">*</span>}
                             </th>
                         ))}
                     </tr>
                     </thead>
                     <tbody>
                     {data.map((row, rowIndex) => (
-                        <tr key={row.id} className="border-b hover:bg-gray-50">
-                            <td className="px-4 py-2">
-                                <button
-                                    onClick={() => setData(prev => prev.filter(r => r.id !== row.id))}
-                                    className="text-red-500 hover:text-red-700"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
+                        <tr key={row.id}>
+                            <td className="border border-gray-400 bg-gray-100 px-2 py-1 text-xs text-center font-medium">
+                                {rowIndex + 1}
                             </td>
-                            {allFields.map(field => (
-                                <td key={field} className="px-4 py-2 text-sm">
-                                    {renderCell(row, field)}
-                                </td>
-                            ))}
+                            {excelColumns.map((col, colIndex) =>
+                                renderCell(row, col, rowIndex, colIndex)
+                            )}
                         </tr>
                     ))}
                     </tbody>
                 </table>
-
-                {data.length === 0 && (
-                    <div className="text-center py-8 text-gray-500">
-                        <p>No data yet. Click "Add Row" to start entering data.</p>
-                        <p className="text-sm mt-2">Or paste your data directly from Excel!</p>
-                    </div>
-                )}
             </div>
-
-            {/* Modal */}
-            {modalState && (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-lg p-6 max-w-2xl w-full max-h-[80vh] overflow-y-auto">
-                        {renderModalContent()}
-                        <div className="mt-6 flex justify-end space-x-2">
-                            <button
-                                onClick={() => setModalState(null)}
-                                className="px-4 py-2 border rounded hover:bg-gray-50"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={saveModalData}
-                                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                            >
-                                Save
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
 
             {/* Generated JSON */}
             {generatedJson && (
-                <div className="mt-6">
+                <div className="mt-4">
                     <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-lg font-semibold">Generated JSON</h3>
-                        <button
-                            onClick={copyToClipboard}
-                            className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded"
-                        >
-                            {copySuccess ? (
-                                <>
-                                    <Check size={16} className="text-green-600" />
-                                    <span>Copied!</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Copy size={16} />
-                                    <span>Copy to Clipboard</span>
-                                </>
-                            )}
-                        </button>
+                        <h3 className="text-lg font-semibold">
+                            Generated JSON - {profileType.toUpperCase()} {mode === 'create' ? 'CREATE' : 'UPDATE'} Format
+                        </h3>
+                        <div className="flex space-x-2">
+                            <button
+                                onClick={copyToClipboard}
+                                className="flex items-center space-x-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                            >
+                                {copySuccess ? (
+                                    <>
+                                        <Check size={14} className="text-green-600" />
+                                        <span>Copied!</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Copy size={14} />
+                                        <span>Copy</span>
+                                    </>
+                                )}
+                            </button>
+                            <button
+                                onClick={exportJsonFile}
+                                className="flex items-center space-x-1 px-3 py-1.5 bg-purple-500 text-white hover:bg-purple-600 rounded text-sm"
+                            >
+                                <Download size={14} />
+                                <span>Download</span>
+                            </button>
+                        </div>
                     </div>
-                    <pre className="bg-gray-100 p-4 rounded overflow-x-auto text-sm">
+                    <pre className="bg-gray-100 p-3 rounded overflow-x-auto text-xs max-h-64 overflow-y-auto">
             {generatedJson}
           </pre>
                 </div>
