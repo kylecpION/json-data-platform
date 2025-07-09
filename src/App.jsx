@@ -1,60 +1,135 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Plus, Trash2, Download, Copy, Check, FileDown, Users, Briefcase, Building2 } from 'lucide-react';
+import { Plus, Trash2, Download, Copy, Check, FileDown, Users, Briefcase, Building2, AlertTriangle, ClipboardCopy, ClipboardPaste, Eraser, ArrowUp, ArrowDown, Upload } from 'lucide-react';
 
+// Main Application Component
 const BulkDataEntryPlatform = () => {
+    // Core State
     const [data, setData] = useState([]);
     const [selectedCells, setSelectedCells] = useState(new Set());
-    const [selectionStart, setSelectionStart] = useState(null);
+    const [activeCell, setActiveCell] = useState(null); // e.g., '0-1' for row 0, col 1
     const [generatedJson, setGeneratedJson] = useState('');
     const [copySuccess, setCopySuccess] = useState(false);
-    const [mode, setMode] = useState('create'); // 'create' or 'update'
-    const [profileType, setProfileType] = useState('rel'); // 'rel' or 'pep'
-    const tableRef = useRef(null);
 
-    // Excel columns - flexible structure that can handle various data types
+    // UI/Feature State
+    const [mode, setMode] = useState('create');
+    const [profileType, setProfileType] = useState('rel');
+    const [isDraggingFill, setIsDraggingFill] = useState(false);
+    const [dragFillRange, setDragFillRange] = useState({ start: null, end: null });
+    const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, rowIndex: null });
+
+    // Refs
+    const tableRef = useRef(null);
+    const mainContainerRef = useRef(null);
+    const fileInputRef = useRef(null);
+
+    // Column Definitions
     const excelColumns = [
-        'no', 'name', 'alias', 'alias2', 'osn', 'gender', 'type',
-        'event_type', 'rel_category', 'rel_subcategory', 'list_name',
-        'pep_tier', 'pep_segment', 'pep_position', 'pep_category',
-        'line1', 'line2', 'city', 'county', 'state', 'country', 'country_id',
-        'summary', 'snippet', 'pdf_names', 'url', 'article_id',
+        'no', 'full_name', 'alias_1', 'alias_2', 'name_original_script', 'gender',
+        'dob_day', 'dob_month', 'dob_year',
+        'nationality_iso_code', 'event_type', 'rel_category', 'rel_subcategory', 'list_name',
+        'pep_tier', 'pep_segment', 'pep_position', 'pep_category', 'pep_entry_country_iso_code',
+        'line1', 'line2', 'city', 'county', 'state', 'country', 'address_country_id',
+        'summary', 'snippet', 'pdf_filename', 'url', 'article_id',
         'publication_date', 'event_date', 'day', 'month', 'year',
         'datefrom', 'dateto', 'day_from', 'month_from', 'year_from',
         'day_to', 'month_to', 'year_to',
-        'qr', 'rel_id', 'qr2', 'bridge'
+        'reference_id', 'rel_id', 'bridge_id'
     ];
 
-    // Initialize empty rows
-    const initializeRows = (count = 20) => {
-        const newRows = [];
-        for (let i = 0; i < count; i++) {
-            const row = { id: Date.now() + i };
-            excelColumns.forEach(col => {
-                row[col] = '';
-            });
-            row['qr'] = mode;
-            newRows.push(row);
+    // Helper to get required columns based on current mode
+    const getRequiredColumns = () => {
+        if (mode === 'create' && profileType === 'pep') {
+            return ['full_name', 'nationality_iso_code', 'pep_entry_country_iso_code', 'pep_tier', 'pep_position', 'pep_category'];
         }
-        return newRows;
+        if (mode === 'create' && profileType === 'rel') return ['full_name'];
+        if (mode === 'update') return ['reference_id'];
+        return [];
     };
 
+    // Initialize or reset rows
+    const initializeRows = (count = 20) => {
+        return Array.from({ length: count }, (_, i) => {
+            const row = { id: Date.now() + i };
+            excelColumns.forEach(col => { row[col] = ''; });
+            if (mode === 'create') row['reference_id'] = 'create';
+            return row;
+        });
+    };
+
+    // Effect to re-initialize data when mode or profile type changes
     useEffect(() => {
         setData(initializeRows());
         setSelectedCells(new Set());
+        setActiveCell(null);
     }, [mode, profileType]);
 
-    // Handle cell click and selection
-    const handleCellClick = (rowIndex, colIndex, e) => {
-        const cellKey = `${rowIndex}-${colIndex}`;
+    // Effect to handle global clicks for closing context menu
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (contextMenu.visible && !event.target.closest('.context-menu')) {
+                setContextMenu({ visible: false, x: 0, y: 0, rowIndex: null });
+            }
+        };
+        window.addEventListener('click', handleClickOutside);
+        return () => window.removeEventListener('click', handleClickOutside);
+    }, [contextMenu.visible]);
 
-        if (e.shiftKey && selectionStart) {
-            const [startRow, startCol] = selectionStart.split('-').map(Number);
+
+    // --- DATA MANIPULATION HANDLERS ---
+    const handleCellEdit = (rowIndex, colIndex, value) => {
+        setData(prevData => {
+            const newData = [...prevData];
+            newData[rowIndex][excelColumns[colIndex]] = value;
+            return newData;
+        });
+    };
+
+    const addRows = (count = 10, belowIndex = null) => {
+        const newRows = initializeRows(count);
+        setData(prev => {
+            const dataCopy = [...prev];
+            const insertIndex = belowIndex !== null ? belowIndex + 1 : prev.length;
+            dataCopy.splice(insertIndex, 0, ...newRows);
+            return dataCopy;
+        });
+    };
+
+    const deleteRows = () => {
+        const rowsToDelete = new Set();
+        selectedCells.forEach(cell => {
+            const [rowIndex] = cell.split('-').map(Number);
+            rowsToDelete.add(rowIndex);
+        });
+        setData(prev => prev.filter((_, index) => !rowsToDelete.has(index)));
+        setSelectedCells(new Set());
+        setActiveCell(null);
+    };
+
+    const clearSelectedCells = () => {
+        setData(prevData => {
+            const newData = [...prevData];
+            selectedCells.forEach(cell => {
+                const [rowIndex, colIndex] = cell.split('-').map(Number);
+                if (newData[rowIndex]) {
+                    newData[rowIndex][excelColumns[colIndex]] = '';
+                }
+            });
+            return newData;
+        });
+    };
+
+    // --- SELECTION & DRAG HANDLERS ---
+    const handleCellMouseDown = (rowIndex, colIndex, e) => {
+        const cellKey = `${rowIndex}-${colIndex}`;
+        setActiveCell(cellKey);
+
+        if (e.shiftKey && activeCell) {
+            const [startRow, startCol] = activeCell.split('-').map(Number);
+            const newSelection = new Set();
             const minRow = Math.min(startRow, rowIndex);
             const maxRow = Math.max(startRow, rowIndex);
             const minCol = Math.min(startCol, colIndex);
             const maxCol = Math.max(startCol, colIndex);
-
-            const newSelection = new Set();
             for (let r = minRow; r <= maxRow; r++) {
                 for (let c = minCol; c <= maxCol; c++) {
                     newSelection.add(`${r}-${c}`);
@@ -63,86 +138,82 @@ const BulkDataEntryPlatform = () => {
             setSelectedCells(newSelection);
         } else if (e.ctrlKey || e.metaKey) {
             const newSelection = new Set(selectedCells);
-            if (newSelection.has(cellKey)) {
-                newSelection.delete(cellKey);
-            } else {
-                newSelection.add(cellKey);
-            }
+            newSelection.has(cellKey) ? newSelection.delete(cellKey) : newSelection.add(cellKey);
             setSelectedCells(newSelection);
-            setSelectionStart(cellKey);
         } else {
             setSelectedCells(new Set([cellKey]));
-            setSelectionStart(cellKey);
         }
     };
 
-    // Handle cell editing
-    const handleCellEdit = (rowIndex, colIndex, value) => {
-        const newData = [...data];
-        if (!newData[rowIndex]) {
-            newData[rowIndex] = { id: Date.now() + rowIndex };
-            excelColumns.forEach(col => {
-                newData[rowIndex][col] = '';
+    const handleFillHandleMouseDown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingFill(true);
+        setDragFillRange({ start: activeCell, end: activeCell });
+    };
+
+    const handleCellMouseEnter = (rowIndex, colIndex) => {
+        if (isDraggingFill) {
+            setDragFillRange(prev => ({ ...prev, end: `${rowIndex}-${colIndex}` }));
+        }
+    };
+
+    const handleMouseUp = () => {
+        if (isDraggingFill) {
+            const [startRow, startCol] = dragFillRange.start.split('-').map(Number);
+            const [endRow] = dragFillRange.end.split('-').map(Number);
+            const fillValue = data[startRow][excelColumns[startCol]];
+
+            setData(prevData => {
+                const newData = [...prevData];
+                for (let r = startRow + 1; r <= endRow; r++) {
+                    if (newData[r]) {
+                        newData[r][excelColumns[startCol]] = fillValue;
+                    }
+                }
+                return newData;
             });
         }
-        newData[rowIndex][excelColumns[colIndex]] = value;
-        setData(newData);
+        setIsDraggingFill(false);
     };
 
-    // Handle paste event
+    // --- CLIPBOARD & CONTEXT MENU ---
     const handlePaste = (e) => {
         e.preventDefault();
-        const pastedData = e.clipboardData.getData('text');
+        const pastedData = e.clipboardData.getData('text/plain');
         const rows = pastedData.split('\n').map(row => row.split('\t'));
 
-        let startRow = 0;
-        let startCol = 0;
+        if (!activeCell) return;
+        const [startRow, startCol] = activeCell.split('-').map(Number);
 
-        if (selectedCells.size > 0) {
-            const firstCell = Array.from(selectedCells).sort()[0];
-            [startRow, startCol] = firstCell.split('-').map(Number);
-        }
+        setData(prevData => {
+            const newData = [...prevData];
+            const neededRows = startRow + rows.length;
+            if (newData.length < neededRows) {
+                newData.push(...initializeRows(neededRows - newData.length));
+            }
 
-        const newData = [...data];
-
-        const neededRows = startRow + rows.length;
-        while (newData.length < neededRows) {
-            const newRow = { id: Date.now() + newData.length };
-            excelColumns.forEach(col => {
-                newRow[col] = '';
+            rows.forEach((row, rIdx) => {
+                row.forEach((cell, cIdx) => {
+                    const targetRow = startRow + rIdx;
+                    const targetCol = startCol + cIdx;
+                    if (targetCol < excelColumns.length && newData[targetRow]) {
+                        newData[targetRow][excelColumns[targetCol]] = cell.trim();
+                    }
+                });
             });
-            newRow['qr'] = mode;
-            newData.push(newRow);
-        }
-
-        rows.forEach((row, rIdx) => {
-            const targetRow = startRow + rIdx;
-            row.forEach((cell, cIdx) => {
-                const targetCol = startCol + cIdx;
-                if (targetCol < excelColumns.length) {
-                    newData[targetRow][excelColumns[targetCol]] = cell.trim();
-                }
-            });
+            return newData;
         });
-
-        setData(newData);
     };
 
-    // Handle copy event
     const handleCopy = (e) => {
         if (selectedCells.size === 0) return;
-
         e.preventDefault();
-
-        const cells = Array.from(selectedCells).map(cell => {
-            const [row, col] = cell.split('-').map(Number);
-            return { row, col };
-        });
-
-        const minRow = Math.min(...cells.map(c => c.row));
-        const maxRow = Math.max(...cells.map(c => c.row));
-        const minCol = Math.min(...cells.map(c => c.col));
-        const maxCol = Math.max(...cells.map(c => c.col));
+        const cells = Array.from(selectedCells).map(cell => cell.split('-').map(Number));
+        const minRow = Math.min(...cells.map(c => c[0]));
+        const maxRow = Math.max(...cells.map(c => c[0]));
+        const minCol = Math.min(...cells.map(c => c[1]));
+        const maxCol = Math.max(...cells.map(c => c[1]));
 
         const copyData = [];
         for (let r = minRow; r <= maxRow; r++) {
@@ -152,80 +223,104 @@ const BulkDataEntryPlatform = () => {
             }
             copyData.push(rowData.join('\t'));
         }
-
         e.clipboardData.setData('text/plain', copyData.join('\n'));
     };
 
-    // Helper functions
-    const checkLen = (text, n = 1) => {
-        return text && text.toString().length >= n;
+    const handleContextMenu = (e, rowIndex) => {
+        e.preventDefault();
+        setContextMenu({ visible: true, x: e.clientX, y: e.clientY, rowIndex });
     };
 
+    // --- CSV/JSON FILE HANDLING ---
+    const downloadTemplate = () => {
+        const header = excelColumns.join(',');
+        const blob = new Blob([header], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', 'data_entry_template.csv');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    const handleFileUpload = (event) => {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const text = e.target.result;
+            const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+            if (lines.length < 2) {
+                alert("CSV file must contain a header row and at least one data row.");
+                return;
+            }
+
+            const headers = lines[0].split(',').map(h => h.trim());
+            const importedData = lines.slice(1).map((line, lineIndex) => {
+                const values = line.split(',');
+                const rowData = { id: Date.now() + lineIndex };
+                excelColumns.forEach(col => { rowData[col] = ''; });
+
+                headers.forEach((header, index) => {
+                    if (excelColumns.includes(header)) {
+                        rowData[header] = values[index] ? values[index].trim() : '';
+                    }
+                });
+                return rowData;
+            });
+
+            setData(importedData);
+        };
+        reader.readAsText(file);
+        event.target.value = null; // Reset file input
+    };
+
+
+    // --- JSON CONVERSION HELPERS ---
     const safeInt = (value) => {
         const parsed = parseInt(value);
         return isNaN(parsed) ? null : parsed;
     };
-
-    const cleanString = (str) => {
-        return str ? str.toString().replace(/\./g, '').trim() : '';
-    };
-
-    const titleCase = (str) => {
-        return str ? str.toString().toLowerCase().replace(/\b\w/g, l => l.toUpperCase()) : '';
-    };
-
-    // Split name function
-    const splitName = (fullName) => {
-        const cleaned = titleCase(cleanString(fullName));
-        const parts = cleaned.split(/\s+/).filter(p => p);
-
-        let firstName = '';
-        let middleName = '';
-        let lastName = '';
-
-        if (parts.length === 1) {
-            lastName = parts[0];
-        } else if (parts.length === 2) {
-            firstName = parts[0];
-            lastName = parts[1];
-        } else if (parts.length >= 3) {
-            firstName = parts[0];
-            middleName = parts.slice(1, -1).join(' ');
-            lastName = parts[parts.length - 1];
-        }
-
-        return { firstName, middleName, lastName };
-    };
-
-    // Parse date helper
     const parseDate = (day, month, year) => {
         const d = safeInt(day);
         const m = safeInt(month);
         const y = safeInt(year);
-
         const date = {};
         if (d !== null) date.day = d;
         if (m !== null) date.month = m;
         if (y !== null) date.year = y;
-
         return Object.keys(date).length > 0 ? date : null;
     };
+    const cleanString = (str) => {
+        return str ? str.toString().replace(/\./g, '').trim() : '';
+    };
+    const titleCase = (str) => {
+        return str ? str.toString().toLowerCase().replace(/\b\w/g, l => l.toUpperCase()) : '';
+    };
+    const splitName = (fullName) => {
+        const cleaned = titleCase(cleanString(fullName));
+        const parts = cleaned.split(/\s+/).filter(p => p);
+        let firstName = '', middleName = '', lastName = '';
+        if (parts.length === 1) { lastName = parts[0]; }
+        else if (parts.length === 2) { [firstName, lastName] = parts; }
+        else if (parts.length >= 3) {
+            firstName = parts[0];
+            middleName = parts.slice(1, -1).join(' ');
+            lastName = parts[parts.length - 1];
+        }
+        return { firstName, middleName, lastName };
+    };
 
-    // Convert to JSON format - CREATE
+    // --- JSON CONVERSION LOGIC ---
     const convertToJsonCreate = () => {
         const individuals = [];
-
-        const createRows = data.filter(row =>
-            row.qr === 'create' &&
-            row.name &&
-            row.name.toString().trim() !== ''
-        );
-
-        // Remove duplicates by name
+        const createRows = data.filter(row => row.reference_id === 'create' && row.full_name && row.full_name.toString().trim() !== '');
         const uniqueRows = [];
         const seenNames = new Set();
         createRows.forEach(row => {
-            const name = cleanString(row.name);
+            const name = cleanString(row.full_name);
             if (!seenNames.has(name)) {
                 seenNames.add(name);
                 uniqueRows.push(row);
@@ -234,341 +329,201 @@ const BulkDataEntryPlatform = () => {
 
         uniqueRows.forEach(row => {
             const person = {};
-
-            // Parse name
-            const { firstName, middleName, lastName } = splitName(row.name);
+            const { firstName, middleName, lastName } = splitName(row.full_name);
             if (firstName) person.firstName = firstName;
             if (middleName) person.middleName = middleName;
             if (lastName) person.lastName = lastName;
-
-            // Gender & nationalities
-            if (row.gender) person.gender = row.gender;
-            if (row.country) person.nationalities = [row.country.toString().trim()];
-
-            // Aliases
+            if (row.gender) person.gender = row.gender.toString().trim();
+            const dob = parseDate(row.dob_day, row.dob_month, row.dob_year);
+            if (dob) { person.datesOfBirth = [dob]; }
             const aliases = [];
-
-            // Original Script Name if available
-            if (row.osn) {
-                const osnParts = splitName(row.osn);
+            if (row.name_original_script) {
+                const osnParts = splitName(row.name_original_script);
                 const osnAlias = { type: 'Original Script Name' };
                 if (osnParts.firstName) osnAlias.firstName = osnParts.firstName;
                 if (osnParts.middleName) osnAlias.middleName = osnParts.middleName;
                 if (osnParts.lastName) osnAlias.lastName = osnParts.lastName;
                 aliases.push(osnAlias);
             }
-
-            // Name spelling variation (reversed order)
             const alias1 = { type: 'Name Spelling Variation' };
             if (lastName) alias1.firstName = lastName;
             if (middleName) alias1.middleName = middleName;
             if (firstName) alias1.lastName = firstName;
             aliases.push(alias1);
-
-            // Nickname from alias field
-            if (row.alias) {
-                aliases.push({
-                    type: 'Nickname',
-                    firstName: titleCase(cleanString(row.alias))
-                });
-            }
-
-            // Nickname from alias2 field
-            if (row.alias2) {
-                aliases.push({
-                    type: 'Nickname',
-                    firstName: titleCase(cleanString(row.alias2))
-                });
-            }
-
+            if (row.alias_1) aliases.push({ type: 'Nickname', firstName: titleCase(cleanString(row.alias_1)) });
+            if (row.alias_2) aliases.push({ type: 'Nickname', firstName: titleCase(cleanString(row.alias_2)) });
             if (aliases.length > 0) person.aliases = aliases;
-
-            // Evidences
-            const evidence = {};
-            const url = row.url ? row.url.toString().trim() : '';
-            let pdfName = row.pdf_names ? row.pdf_names.toString().trim() : '';
             const articleId = row.article_id ? row.article_id.toString().trim() : '';
-
-            if (pdfName && !pdfName.toLowerCase().endsWith('.pdf')) {
-                pdfName += '.pdf';
-            }
-
-            if (articleId) evidence.articleId = articleId;
-
-            if (pdfName) {
-                evidence.bulkAssetFilename = pdfName;
-                if (url) evidence.originalUrl = url;
-            } else if (url) {
-                evidence.bulkAssetUrl = url;
-            }
-
-            // Only add these fields if we have evidence content
-            if (pdfName || url || articleId) {
-                evidence.copyrighted = true;
-                evidence.sourceOfWealth = false;
-                evidence.credibility = 'High';
-                evidence.language = 'eng';
-
-                // Evidence date - check multiple possible date columns
-                let evidenceDate = null;
-                if (row.event_date) {
-                    const eventDate = new Date(row.event_date);
-                    if (!isNaN(eventDate)) {
-                        evidenceDate = {
-                            day: eventDate.getDate(),
-                            month: eventDate.getMonth() + 1,
-                            year: eventDate.getFullYear()
-                        };
-                    }
+            const url = row.url ? row.url.toString().trim() : '';
+            let pdfName = row.pdf_filename ? row.pdf_filename.toString().trim() : '';
+            if (pdfName && !pdfName.toLowerCase().endsWith('.pdf')) pdfName += '.pdf';
+            const hasEvidence = articleId || url || pdfName;
+            if (hasEvidence) {
+                const evidence = {};
+                if (articleId) {
+                    evidence.articleId = articleId;
+                    if (row.summary) evidence.summary = row.summary.toString().trim();
+                    else if (row.snippet) evidence.summary = row.snippet.toString().trim();
                 } else {
-                    evidenceDate = parseDate(row.day, row.month, row.year);
+                    if (pdfName) {
+                        evidence.bulkAssetFilename = pdfName;
+                        if (url) evidence.originalUrl = url;
+                    } else if (url) {
+                        evidence.bulkAssetUrl = url;
+                    }
+                    evidence.copyrighted = true;
+                    evidence.sourceOfWealth = false;
+                    evidence.credibility = 'High';
+                    evidence.language = 'eng';
+                    let evidenceDate = parseDate(row.day, row.month, row.year);
+                    if (evidenceDate) evidence.evidenceDate = evidenceDate;
+                    const pubDate = parseDate(row.day, row.month, row.year);
+                    if (pubDate) evidence.publicationDate = pubDate;
+                    if (row.summary) evidence.summary = row.summary.toString().trim();
+                    else if (row.snippet) evidence.summary = row.snippet.toString().trim();
                 }
-
-                if (evidenceDate) evidence.evidenceDate = evidenceDate;
-
-                // Publication date
-                const pubDate = parseDate(row.day, row.month, row.year);
-                if (pubDate) evidence.publicationDate = pubDate;
-
-                if (row.summary) {
-                    evidence.summary = row.summary.toString().trim();
-                } else if (row.snippet) {
-                    evidence.summary = row.snippet.toString().trim();
-                }
-
                 person.evidences = [evidence];
             }
-
-            // Addresses
             const address = {};
             if (row.line1) address.line1 = titleCase(cleanString(row.line1));
             if (row.line2) address.line2 = titleCase(cleanString(row.line2));
             if (row.city) address.city = titleCase(cleanString(row.city));
             if (row.county) address.county = titleCase(cleanString(row.county));
-            if (row.state) address.city = titleCase(cleanString(row.state)); // Map state to city if no city
-
-            const countryId = safeInt(row.country_id);
+            if (row.state) address.city = titleCase(cleanString(row.state));
+            const countryId = safeInt(row.address_country_id);
             if (countryId !== null) address.countryId = countryId;
-
-            // Only add address if it has content
             if (Object.keys(address).length > 0) {
                 address.addressType = 'Business';
                 person.addresses = [address];
             }
-
-            // Handle based on profile type
             if (profileType === 'pep') {
-                // PEP specific fields
-                if (row.pep_tier) person.pepTier = row.pep_tier;
-
-                // Current PEP entries
+                person.nationalities = [];
+                if (row.nationality_iso_code) {
+                    person.nationalities = [row.nationality_iso_code.toString().trim().toUpperCase()];
+                }
+                if (row.pep_tier) person.pepTier = row.pep_tier.toString().trim();
                 if (row.pep_segment || row.pep_position || row.pep_category) {
                     const pepEntry = {};
-                    if (row.pep_segment) pepEntry.segment = row.pep_segment;
-                    if (row.pep_position) pepEntry.position = row.pep_position;
-                    if (row.pep_category) pepEntry.category = row.pep_category;
-
-                    // Date from/to for PEP
+                    if (row.pep_segment) pepEntry.segment = row.pep_segment.toString().trim();
+                    if (row.pep_position) pepEntry.position = row.pep_position.toString().trim();
+                    if (row.pep_category) pepEntry.category = row.pep_category.toString().trim();
+                    if (row.pep_entry_country_iso_code) {
+                        pepEntry.countryIsoCode = row.pep_entry_country_iso_code.toString().trim().toUpperCase();
+                    }
                     const dateFrom = parseDate(row.day_from, row.month_from, row.year_from);
-                    const dateTo = parseDate(row.day_to, row.month_to, row.year_to);
-
                     if (dateFrom) pepEntry.dateFrom = dateFrom;
+                    const dateTo = parseDate(row.day_to, row.month_to, row.year_to);
                     if (dateTo) pepEntry.dateTo = dateTo;
-
+                    if (articleId) {
+                        pepEntry.evidences = [{ evidenceId: articleId }];
+                    }
                     person.currentPepEntries = [pepEntry];
                 }
             } else {
-                // REL entries (for non-PEP profiles)
                 const relEntry = {};
-
-                // Only add category/subcategory if provided
-                if (row.rel_category) relEntry.category = row.rel_category;
-                if (row.rel_subcategory) relEntry.subcategory = row.rel_subcategory;
-                if (row.list_name && !row.rel_subcategory) relEntry.subcategory = row.list_name;
-
+                if (row.rel_category) relEntry.category = row.rel_category.toString().trim();
+                if (row.rel_subcategory) relEntry.subcategory = row.rel_subcategory.toString().trim();
+                if (row.list_name && !row.rel_subcategory) relEntry.subcategory = row.list_name.toString().trim();
                 const event = {};
-
-                // Event date
                 const eventDate = parseDate(row.day, row.month, row.year);
                 if (eventDate) event.date = eventDate;
-
-                // Event type
-                if (row.event_type) {
-                    event.type = row.event_type;
-                } else if (row.type) {
-                    event.type = row.type;
-                }
-
-                // Event evidences
-                if (articleId) {
-                    event.evidences = [{ articleId: articleId }];
-                } else if (pdfName) {
-                    event.evidences = [{ bulkAssetFilename: pdfName }];
-                } else if (url) {
-                    event.evidences = [{ bulkAssetUrl: url }];
-                }
-
-                // Only add event if it has content
-                if (Object.keys(event).length > 0) {
-                    relEntry.events = [event];
-                }
-
-                // Only add REL entry if it has content
-                if (Object.keys(relEntry).length > 0) {
-                    person.relEntries = [relEntry];
-                }
+                if (row.event_type) event.type = row.event_type.toString().trim();
+                if (articleId) event.evidences = [{ articleId }];
+                else if (pdfName) event.evidences = [{ bulkAssetFilename: pdfName }];
+                else if (url) event.evidences = [{ bulkAssetUrl: url }];
+                if (Object.keys(event).length > 0) relEntry.events = [event];
+                if (Object.keys(relEntry).length > 0) person.relEntries = [relEntry];
             }
-
             individuals.push(person);
         });
-
         return { individuals };
     };
 
-    // Convert to JSON format - UPDATE
     const convertToJsonUpdate = () => {
         const individuals = [];
-
-        const updateRows = data.filter(row =>
-            row.qr &&
-            row.qr !== 'create' &&
-            row.qr !== 'no-update' &&
-            row.qr.toString().trim() !== ''
-        );
-
-        // Remove duplicates by qr (reference number)
+        const updateRows = data.filter(row => row.reference_id && row.reference_id !== 'create' && row.reference_id.toString().trim() !== '');
         const uniqueRows = [];
         const seenQRs = new Set();
         updateRows.forEach(row => {
-            const qr = row.qr.toString().trim();
-            if (!seenQRs.has(qr)) {
-                seenQRs.add(qr);
+            const refId = row.reference_id.toString().trim();
+            if (!seenQRs.has(refId)) {
+                seenQRs.add(refId);
                 uniqueRows.push(row);
             }
         });
 
         uniqueRows.forEach(row => {
-            const person = {};
+            const person = { referenceNumber: row.reference_id.toString().trim() };
 
-            person.referenceNumber = row.qr.toString();
+            // 1. Handle simple field updates
+            const dob = parseDate(row.dob_day, row.dob_month, row.dob_year);
+            if (dob) {
+                person.datesOfBirth = [dob];
+            }
 
-            // Evidence
-            const evidence = {};
-            const url = row.url ? row.url.toString().trim() : '';
-            let pdfName = row.pdf_names ? row.pdf_names.toString().trim() : '';
+            // 2. Handle categorized REL Entry updates (these are valid updates)
             const articleId = row.article_id ? row.article_id.toString().trim() : '';
+            const url = row.url ? row.url.toString().trim() : '';
+            let pdfName = row.pdf_filename ? row.pdf_filename.toString().trim() : '';
+            if (pdfName && !pdfName.toLowerCase().endsWith('.pdf')) pdfName += '.pdf';
 
-            if (pdfName && !pdfName.toLowerCase().endsWith('.pdf')) {
-                pdfName += '.pdf';
-            }
+            if (row.rel_category && row.event_type) {
+                const relEntry = { category: row.rel_category.toString().trim() };
+                if (row.rel_id) relEntry.id = row.rel_id.toString().trim();
+                if (row.rel_subcategory) relEntry.subcategory = row.rel_subcategory.toString().trim();
 
-            if (articleId) evidence.articleId = articleId;
+                const event = { type: row.event_type.toString().trim() };
+                const eventDate = parseDate(row.day, row.month, row.year);
+                if (eventDate) event.date = eventDate;
 
-            if (pdfName) {
-                evidence.bulkAssetFilename = pdfName;
-                if (url) evidence.originalUrl = url;
-            } else if (url) {
-                evidence.bulkAssetUrl = url;
-            }
+                if (articleId) event.evidences = [{ articleId }];
+                else if (pdfName) event.evidences = [{ bulkAssetFilename: pdfName }];
+                else if (url) event.evidences = [{ bulkAssetUrl: url }];
 
-            if (pdfName || url || articleId) {
-                evidence.copyrighted = true;
-                evidence.sourceOfWealth = false;
-                evidence.credibility = 'High';
-                evidence.language = 'eng';
-
-                // Evidence date
-                let evidenceDate = null;
-                if (row.event_date) {
-                    const eventDate = new Date(row.event_date);
-                    if (!isNaN(eventDate)) {
-                        evidenceDate = {
-                            day: eventDate.getDate(),
-                            month: eventDate.getMonth() + 1,
-                            year: eventDate.getFullYear()
-                        };
-                    }
-                } else {
-                    evidenceDate = parseDate(row.day, row.month, row.year);
-                }
-
-                if (evidenceDate) evidence.evidenceDate = evidenceDate;
-
-                // Publication date
-                if (row.publication_date) {
-                    const pubDate = parseDate(row.day, row.month, row.year);
-                    if (pubDate) evidence.publicationDate = pubDate;
-                }
-
-                if (row.summary) {
-                    evidence.summary = row.summary.toString().trim();
-                } else if (row.snippet) {
-                    evidence.summary = row.snippet.toString().trim();
-                }
-
-                person.evidences = [evidence];
-            }
-
-            // REL entries for updates
-            const relEntry = {};
-
-            if (row.rel_id) {
-                relEntry.id = row.rel_id.toString();
-            } else {
-                // Only add category/subcategory if provided
-                if (row.rel_category) relEntry.category = row.rel_category;
-                if (row.rel_subcategory) relEntry.subcategory = row.rel_subcategory;
-                if (row.list_name && !row.rel_subcategory) relEntry.subcategory = row.list_name;
-            }
-
-            const event = {};
-
-            // Event date
-            const eventDate = parseDate(row.day, row.month, row.year);
-            if (eventDate) event.date = eventDate;
-
-            // Event type with mapping
-            const eventTypeMap = {
-                'Asset Forfeiture/Seizure': 'Asset Freeze',
-                'Asset Forfeiture': 'Asset Freeze',
-                'Seizure': 'Asset Freeze'
-            };
-
-            const rawType = row.event_type || row.type || '';
-            if (rawType) {
-                event.type = eventTypeMap[rawType] || rawType;
-            }
-
-            // Event evidences
-            if (articleId) {
-                event.evidences = [{ articleId: articleId }];
-            } else if (pdfName) {
-                event.evidences = [{ bulkAssetFilename: pdfName }];
-            } else if (url) {
-                event.evidences = [{ bulkAssetUrl: url }];
-            }
-
-            if (Object.keys(event).length > 0) {
                 relEntry.events = [event];
-            }
-
-            if (Object.keys(relEntry).length > 0) {
                 person.relEntries = [relEntry];
             }
+                // 3. Handle adding uncategorized, top-level evidence
+            // This should only happen if no other fields are being updated, to avoid ambiguity.
+            else if (articleId || url || pdfName) {
+                const isUpdatingOtherFields = 'datesOfBirth' in person;
+                if (!isUpdatingOtherFields) {
+                    const evidence = {};
+                    if (articleId) {
+                        evidence.articleId = articleId;
+                        if (row.summary) evidence.summary = row.summary.toString().trim();
+                    } else {
+                        if (pdfName) {
+                            evidence.bulkAssetFilename = pdfName;
+                            if (url) evidence.originalUrl = url;
+                        } else if (url) {
+                            evidence.bulkAssetUrl = url;
+                        }
+                        evidence.copyrighted = true;
+                        evidence.sourceOfWealth = false;
+                        evidence.credibility = 'High';
+                        evidence.language = 'eng';
+                        let evidenceDate = parseDate(row.day, row.month, row.year);
+                        if (evidenceDate) evidence.evidenceDate = evidenceDate;
+                    }
+                    person.evidences = [evidence];
+                }
+                // If other fields ARE being updated, we "unlink" the evidence by not adding it,
+                // preventing the API error.
+            }
 
-            individuals.push(person);
+            if (Object.keys(person).length > 1) {
+                individuals.push(person);
+            }
         });
-
         return { individuals };
     };
 
-    // Generate clean JSON
     const generateCleanJson = () => {
         const result = mode === 'create' ? convertToJsonCreate() : convertToJsonUpdate();
         setGeneratedJson(JSON.stringify(result, null, 4));
     };
 
-    // Export JSON to file
     const exportJsonFile = () => {
         const result = mode === 'create' ? convertToJsonCreate() : convertToJsonUpdate();
         const jsonString = JSON.stringify(result, null, 4);
@@ -585,246 +540,152 @@ const BulkDataEntryPlatform = () => {
         URL.revokeObjectURL(url);
     };
 
-    const copyToClipboard = () => {
-        navigator.clipboard.writeText(generatedJson);
-        setCopySuccess(true);
-        setTimeout(() => setCopySuccess(false), 2000);
-    };
-
-    const addRows = (count = 10) => {
-        const newRows = initializeRows(count);
-        setData(prev => [...prev, ...newRows]);
-    };
-
-    const renderCell = (row, col, rowIndex, colIndex) => {
-        const value = row[col] || '';
-        const cellKey = `${rowIndex}-${colIndex}`;
-        const isSelected = selectedCells.has(cellKey);
-
-        // Special styling for qr column
-        const isQrColumn = col === 'qr';
-        const cellStyle = isQrColumn && mode === 'create' ? 'bg-green-50' : 'bg-white';
-
-        return (
-            <td
-                key={cellKey}
-                className={`border border-gray-300 px-1 py-0.5 text-xs relative ${
-                    isSelected ? 'bg-blue-100' : cellStyle
-                } hover:bg-gray-50`}
-                onClick={(e) => handleCellClick(rowIndex, colIndex, e)}
-                onDoubleClick={() => {
-                    const input = document.querySelector(`#cell-${rowIndex}-${colIndex}`);
-                    if (input) input.focus();
-                }}
-            >
-                <input
-                    id={`cell-${rowIndex}-${colIndex}`}
-                    type="text"
-                    value={value}
-                    onChange={(e) => handleCellEdit(rowIndex, colIndex, e.target.value)}
-                    className="w-full bg-transparent outline-none"
-                    onFocus={() => {
-                        setSelectedCells(new Set([cellKey]));
-                        setSelectionStart(cellKey);
-                    }}
-                />
-            </td>
-        );
-    };
-
-    // Highlight relevant columns based on profile type
-    const getColumnStyle = (col) => {
-        if (profileType === 'pep') {
-            if (['pep_tier', 'pep_segment', 'pep_position', 'pep_category'].includes(col)) {
-                return 'bg-purple-100';
+    const copyJsonToClipboard = () => {
+        const textArea = document.createElement('textarea');
+        textArea.value = generatedJson;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '-9999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        try {
+            const successful = document.execCommand('copy');
+            if (successful) {
+                setCopySuccess(true);
+                setTimeout(() => setCopySuccess(false), 2000);
             }
-        } else {
-            if (['rel_category', 'rel_subcategory', 'list_name', 'event_type'].includes(col)) {
-                return 'bg-blue-100';
-            }
+        } catch (err) {
+            console.error('Fallback: Error copying JSON', err);
         }
-        if (col === 'qr') return 'bg-yellow-100';
-        return 'bg-gray-200';
+        document.body.removeChild(textArea);
     };
 
+    // --- RENDER ---
     return (
-        <div className="p-4 max-w-full">
-            {/* Header */}
-            <div className="mb-4">
-                <h1 className="text-xl font-bold mb-4">Flexible Excel to JSON Converter</h1>
+        <div ref={mainContainerRef} onMouseUp={handleMouseUp} className="flex h-screen bg-gray-100 font-sans">
+            {/* Left Sidebar: Controls */}
+            <aside className="w-72 bg-white p-6 border-r border-gray-200 flex flex-col space-y-6">
+                <h1 className="text-2xl font-bold text-gray-800">ARI Json Convertor(Test_1)</h1>
 
-                {/* Controls */}
-                <div className="flex items-center space-x-4 mb-4 flex-wrap gap-2">
-                    {/* Profile Type Toggle */}
+                {/* Profile Type */}
+                <div>
+                    <h2 className="text-sm font-semibold text-gray-500 mb-2">Profile Type</h2>
                     <div className="flex items-center bg-gray-100 rounded-lg p-1">
-                        <button
-                            onClick={() => setProfileType('rel')}
-                            className={`flex items-center space-x-1 px-3 py-1.5 rounded-md transition-colors text-sm ${
-                                profileType === 'rel'
-                                    ? 'bg-white shadow-sm text-blue-600 font-medium'
-                                    : 'text-gray-600 hover:text-gray-800'
-                            }`}
-                        >
-                            <Briefcase size={16} />
-                            <span>REL</span>
+                        <button onClick={() => setProfileType('rel')} className={`flex-1 flex items-center justify-center space-x-2 px-3 py-2 rounded-md transition-all text-sm font-medium ${profileType === 'rel' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600 hover:bg-gray-200'}`}>
+                            <Briefcase size={16} /><span>REL</span>
                         </button>
-                        <button
-                            onClick={() => setProfileType('pep')}
-                            className={`flex items-center space-x-1 px-3 py-1.5 rounded-md transition-colors text-sm ${
-                                profileType === 'pep'
-                                    ? 'bg-white shadow-sm text-purple-600 font-medium'
-                                    : 'text-gray-600 hover:text-gray-800'
-                            }`}
-                        >
-                            <Users size={16} />
-                            <span>PEP</span>
+                        <button onClick={() => setProfileType('pep')} className={`flex-1 flex items-center justify-center space-x-2 px-3 py-2 rounded-md transition-all text-sm font-medium ${profileType === 'pep' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-600 hover:bg-gray-200'}`}>
+                            <Users size={16} /><span>PEP</span>
                         </button>
                     </div>
+                </div>
 
-                    {/* Create/Update Mode */}
+                {/* Mode */}
+                <div>
+                    <h2 className="text-sm font-semibold text-gray-500 mb-2">Mode</h2>
                     <div className="flex items-center bg-gray-100 rounded-lg p-1">
-                        <button
-                            onClick={() => setMode('create')}
-                            className={`px-3 py-1.5 rounded-md transition-colors text-sm ${
-                                mode === 'create'
-                                    ? 'bg-white shadow-sm text-green-600 font-medium'
-                                    : 'text-gray-600 hover:text-gray-800'
-                            }`}
-                        >
-                            Create
-                        </button>
-                        <button
-                            onClick={() => setMode('update')}
-                            className={`px-3 py-1.5 rounded-md transition-colors text-sm ${
-                                mode === 'update'
-                                    ? 'bg-white shadow-sm text-blue-600 font-medium'
-                                    : 'text-gray-600 hover:text-gray-800'
-                            }`}
-                        >
-                            Update
-                        </button>
+                        <button onClick={() => setMode('create')} className={`flex-1 px-3 py-2 rounded-md transition-all text-sm font-medium ${mode === 'create' ? 'bg-white shadow-sm text-green-600' : 'text-gray-600 hover:bg-gray-200'}`}>Create</button>
+                        <button onClick={() => setMode('update')} className={`flex-1 px-3 py-2 rounded-md transition-all text-sm font-medium ${mode === 'update' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-600 hover:bg-gray-200'}`}>Update</button>
                     </div>
+                </div>
 
-                    <button
-                        onClick={() => addRows(10)}
-                        className="flex items-center space-x-1 px-3 py-1.5 bg-green-500 text-white rounded hover:bg-green-600 text-sm"
-                    >
-                        <Plus size={16} />
-                        <span>Add 10 Rows</span>
+                {/* Actions */}
+                <div className="space-y-3">
+                    <h2 className="text-sm font-semibold text-gray-500 mb-2">Actions</h2>
+                    <button onClick={() => addRows(10)} className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors shadow-sm">
+                        <Plus size={16} /><span>Add 10 Rows</span>
                     </button>
-
-                    <button
-                        onClick={generateCleanJson}
-                        className="flex items-center space-x-1 px-3 py-1.5 bg-blue-500 text-white rounded hover:bg-blue-600 text-sm"
-                    >
+                    <button onClick={generateCleanJson} className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-gray-700 text-white rounded-lg hover:bg-gray-800 transition-colors shadow-sm">
                         <span>Generate JSON</span>
                     </button>
-
-                    <button
-                        onClick={exportJsonFile}
-                        className="flex items-center space-x-1 px-3 py-1.5 bg-purple-500 text-white rounded hover:bg-purple-600 text-sm"
-                    >
-                        <FileDown size={16} />
-                        <span>Export JSON</span>
+                    <button onClick={exportJsonFile} className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors shadow-sm">
+                        <FileDown size={16} /><span>Export JSON</span>
+                    </button>
+                    <button onClick={downloadTemplate} className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors shadow-sm">
+                        <Download size={16} /><span>Download Template</span>
+                    </button>
+                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv" className="hidden" />
+                    <button onClick={() => fileInputRef.current.click()} className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors shadow-sm">
+                        <Upload size={16} /><span>Import from CSV</span>
                     </button>
                 </div>
 
-                <div className="text-xs text-gray-600 space-y-1 bg-gray-50 p-3 rounded">
-                    <p className="font-semibold">
-                        Current Mode: <span className={profileType === 'pep' ? 'text-purple-600' : 'text-blue-600'}>{profileType.toUpperCase()}</span> -
-                        <span className={mode === 'create' ? 'text-green-600' : 'text-blue-600'}> {mode.toUpperCase()}</span>
-                    </p>
-                    <p>📋 <strong>Flexible Data Handling:</strong> The system adapts to whatever data you provide</p>
-                    <p>⚡ <strong>Quick Tips:</strong></p>
-                    <ul className="ml-4 space-y-0.5">
-                        <li>• <strong>REL Mode:</strong> Uses rel_category, rel_subcategory, event_type fields</li>
-                        <li>• <strong>PEP Mode:</strong> Uses pep_tier, pep_segment, pep_position fields</li>
-                        <li>• Names can be in 'name' column or 'osn' (Original Script Name)</li>
-                        <li>• Dates can be in multiple formats - the system will find them</li>
-                        <li>• Empty fields are automatically excluded from JSON</li>
-                    </ul>
+                {/* Info Panel */}
+                <div className="flex-grow flex items-end">
+                    <div className="text-xs text-gray-500 space-y-2 bg-gray-50 p-3 rounded-lg w-full">
+                        {getRequiredColumns().length > 0 && (
+                            <div className="flex items-start text-amber-600">
+                                <AlertTriangle size={14} className="mr-2 mt-0.5 flex-shrink-0"/>
+                                <span>Required columns for this mode have a red header.</span>
+                            </div>
+                        )}
+                        <p><strong>Tip:</strong> Right-click on a row number for more options. Drag the corner of a selected cell to fill down.</p>
+                    </div>
                 </div>
-            </div>
+            </aside>
 
-            {/* Excel-like Table */}
-            <div
-                className="overflow-auto border-2 border-gray-400"
-                style={{ maxHeight: '60vh' }}
-                onPaste={handlePaste}
-                onCopy={handleCopy}
-                ref={tableRef}
-            >
-                <table className="w-full border-collapse">
-                    <thead className="sticky top-0 z-10">
-                    <tr>
-                        <th className="border border-gray-400 bg-gray-200 px-2 py-1 text-xs font-medium text-center w-12">
-                            #
-                        </th>
-                        {excelColumns.map((col, idx) => (
-                            <th
-                                key={col}
-                                className={`border border-gray-400 px-2 py-1 text-xs font-medium whitespace-nowrap ${
-                                    getColumnStyle(col)
-                                }`}
-                                style={{ minWidth: col === 'summary' || col === 'snippet' ? '200px' : '100px' }}
-                            >
-                                {col}
-                                {col === 'qr' && <span className="text-red-500 ml-1">*</span>}
-                            </th>
-                        ))}
-                    </tr>
-                    </thead>
-                    <tbody>
-                    {data.map((row, rowIndex) => (
-                        <tr key={row.id}>
-                            <td className="border border-gray-400 bg-gray-100 px-2 py-1 text-xs text-center font-medium">
-                                {rowIndex + 1}
-                            </td>
-                            {excelColumns.map((col, colIndex) =>
-                                renderCell(row, col, rowIndex, colIndex)
-                            )}
+            {/* Main Content */}
+            <main className="flex-1 flex flex-col p-6 overflow-hidden">
+                <div className="flex-1 border-2 border-gray-300 rounded-lg overflow-auto shadow-inner bg-white" onPaste={handlePaste} onCopy={handleCopy}>
+                    <table ref={tableRef} className="w-full border-collapse relative" onMouseLeave={() => setIsDraggingFill(false)}>
+                        <thead className="sticky top-0 z-10 bg-gray-50">
+                        <tr>
+                            <th className="border-b border-gray-300 px-2 py-2 text-xs font-medium text-gray-500 text-center w-14 shadow-sm">#</th>
+                            {excelColumns.map((col, idx) => (
+                                <th key={col} className={`border-b border-l border-gray-300 px-3 py-2 text-xs font-medium text-gray-600 whitespace-nowrap shadow-sm ${getRequiredColumns().includes(col) ? 'bg-red-50 text-red-700' : ''}`}>
+                                    {col.replace(/_/g, ' ')}
+                                </th>
+                            ))}
                         </tr>
-                    ))}
-                    </tbody>
-                </table>
-            </div>
+                        </thead>
+                        <tbody>
+                        {data.map((row, rowIndex) => (
+                            <tr key={row.id} className="hover:bg-blue-50/30">
+                                <td className="border-b border-r border-gray-200 bg-gray-50 px-2 py-1 text-xs text-center font-medium text-gray-500 sticky left-0" onContextMenu={(e) => handleContextMenu(e, rowIndex)}>
+                                    {rowIndex + 1}
+                                </td>
+                                {excelColumns.map((col, colIndex) => {
+                                    const cellKey = `${rowIndex}-${colIndex}`;
+                                    const isSelected = selectedCells.has(cellKey);
+                                    const isActive = activeCell === cellKey;
+                                    const value = row[col] || '';
 
-            {/* Generated JSON */}
-            {generatedJson && (
-                <div className="mt-4">
-                    <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-lg font-semibold">
-                            Generated JSON - {profileType.toUpperCase()} {mode === 'create' ? 'CREATE' : 'UPDATE'} Format
-                        </h3>
-                        <div className="flex space-x-2">
-                            <button
-                                onClick={copyToClipboard}
-                                className="flex items-center space-x-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded text-sm"
-                            >
-                                {copySuccess ? (
-                                    <>
-                                        <Check size={14} className="text-green-600" />
-                                        <span>Copied!</span>
-                                    </>
-                                ) : (
-                                    <>
-                                        <Copy size={14} />
-                                        <span>Copy</span>
-                                    </>
-                                )}
-                            </button>
-                            <button
-                                onClick={exportJsonFile}
-                                className="flex items-center space-x-1 px-3 py-1.5 bg-purple-500 text-white hover:bg-purple-600 rounded text-sm"
-                            >
-                                <Download size={14} />
-                                <span>Download</span>
+                                    return (
+                                        <td key={cellKey} onMouseDown={(e) => handleCellMouseDown(rowIndex, colIndex, e)} onMouseEnter={() => handleCellMouseEnter(rowIndex, colIndex)} className={`border-b border-r border-gray-200 p-0 text-xs relative ${isSelected ? 'bg-blue-100' : 'bg-white'}`}>
+                                            <input type="text" value={value} onChange={(e) => handleCellEdit(rowIndex, colIndex, e.target.value)} className={`w-full h-full bg-transparent outline-none px-3 py-1.5 ${isActive ? 'ring-2 ring-blue-500 z-10' : ''}`} />
+                                            {isActive && (
+                                                <div onMouseDown={handleFillHandleMouseDown} className="w-2 h-2 bg-blue-600 border border-white absolute -right-1 -bottom-1 cursor-crosshair z-20" />
+                                            )}
+                                        </td>
+                                    );
+                                })}
+                            </tr>
+                        ))}
+                        </tbody>
+                    </table>
+                </div>
+                {generatedJson && (
+                    <div className="mt-6">
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-lg font-semibold text-gray-800">Generated JSON</h3>
+                            <button onClick={copyJsonToClipboard} className="flex items-center space-x-2 px-3 py-1.5 bg-gray-200 hover:bg-gray-300 rounded-lg text-sm text-gray-700 transition-colors">
+                                {copySuccess ? <Check size={14} className="text-green-600" /> : <ClipboardCopy size={14} />}
+                                <span>{copySuccess ? 'Copied!' : 'Copy JSON'}</span>
                             </button>
                         </div>
+                        <pre className="bg-gray-800 text-white p-4 rounded-lg overflow-auto text-xs max-h-48 shadow-inner">{generatedJson}</pre>
                     </div>
-                    <pre className="bg-gray-100 p-3 rounded overflow-x-auto text-xs max-h-64 overflow-y-auto">
-            {generatedJson}
-          </pre>
+                )}
+            </main>
+
+            {/* Context Menu */}
+            {contextMenu.visible && (
+                <div className="context-menu fixed bg-white shadow-2xl rounded-lg py-2 w-48 z-50 border border-gray-200" style={{ top: contextMenu.y, left: contextMenu.x }}>
+                    <button onClick={() => { addRows(1, contextMenu.rowIndex); setContextMenu({visible: false}); }} className="w-full flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-3"><ArrowDown size={14}/><span>Insert Row Below</span></button>
+                    <button onClick={() => { deleteRows(); setContextMenu({visible: false}); }} className="w-full flex items-center px-4 py-2 text-sm text-red-600 hover:bg-red-50 space-x-3"><Trash2 size={14}/><span>Delete Selected Row(s)</span></button>
+                    <div className="my-1 h-px bg-gray-200" />
+                    <button onClick={() => { clearSelectedCells(); setContextMenu({visible: false}); }} className="w-full flex items-center px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 space-x-3"><Eraser size={14}/><span>Clear Selected Cells</span></button>
                 </div>
             )}
         </div>
